@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# iroiro-translator 実行生成物（Plan §10）
+*.translated.xml
+*.iroiro-progress.json
+*.iroiro-progress.json.tmp

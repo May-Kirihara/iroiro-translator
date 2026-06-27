@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<SSTXMLRessources>
+  <Params>
+    <Addon>TestMod.esp</Addon>
+    <Source>english</Source>
+    <Dest>japanese</Dest>
+    <Version>2</Version>
+  </Params>
+  <Content>
+    <String List="0">
+      <EDID>TestEntryAlias</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Hello &lt;alias=hero&gt;, welcome to %{location}!</Source>
+      <Dest>Hello &lt;alias=hero&gt;, welcome to %{location}!</Dest>
+    </String>
+    <String List="0">
+      <EDID>TestEntryBr</EDID>
+      <REC>BOOK:FULL</REC>
+      <Source>Line one&lt;br&gt;Line two</Source>
+      <Dest>Line one&lt;br&gt;Line two</Dest>
+    </String>
+    <String List="0">
+      <EDID>TestEntryEmpty</EDID>
+      <REC>ACTI:FULL</REC>
+      <Source></Source>
+      <Dest></Dest>
+    </String>
+    <String List="0">
+      <EDID>TestEntryColor</EDID>
+      <REC>ARMO:FULL</REC>
+      <Source>#Steel Armor#\n</Source>
+      <Dest>#Steel Armor#\n</Dest>
+    </String>
+    <String List="0">
+      <EDID>TestEntryPlain</EDID>
+      <REC>SPEL:FULL</REC>
+      <Source>Jobs of Skyrim Debug</Source>
+      <Dest>Jobs of Skyrim Debug</Dest>
+    </String>
+  </Content>
+</SSTXMLRessources>

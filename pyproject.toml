@@ -1,0 +1,83 @@
+# iroiro-translator プロジェクト設定（PEP 621）
+# Plan §5.3 / §13 参照
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "iroiro"
+version = "0.1.0"
+description = "Skyrim MOD xTranslator 形式 XML を OpenAI 互換 LLM で英→日翻訳するバッチ CLI"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "iroiro-translator" }]
+keywords = ["skyrim", "xtranslator", "translation", "llm", "openai"]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Text Processing :: Markup :: XML",
+]
+dependencies = [
+    "openai>=1.0",
+    "httpx",
+    "lxml",
+    "typer>=0.9",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[project.scripts]
+iroiro = "iroiro.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/iroiro-translator/iroiro"
+
+# ---------------------------------------------------------------------------
+# ツール設定
+# ---------------------------------------------------------------------------
+
+[tool.hatch.build.targets.wheel]
+packages = ["iroiro"]
+
+[tool.pytest.ini_options]
+# Plan §7.6: asyncio_mode=auto / testpaths=["tests"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# 進捗ファイル等がテスト実行ディレクトリに残らないよう、カレントを除外
+filterwarnings = [
+    "ignore::DeprecationWarning:openai.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["sample", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # line-too-long: コメント/文字列は適宜許容
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]  # テストでは pytest.raises を優先
+"iroiro/cli.py" = ["B008"]  # typer.Argument/Option は引数デフォルトで呼ぶ idiomatic API
+
+[tool.mypy]
+python_version = "3.12"
+# 段階的型導入: まずは緩めに設定し、iroiro パッケージのみ検査
+files = ["iroiro"]
+strict = false
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true

@@ -1,0 +1,185 @@
+"""進捗ファイル（progress.json）の並行安全な読み書き。
+
+Plan §5.8 / §6.5 で規定される ``ProgressWriter`` と ``ProgressData`` を実装する。
+
+設計の要点:
+    * 並行安全: ``asyncio.Lock`` で ``mark_done`` / ``mark_failed`` を直列化。
+    * 原子的書き込み: ``tmp -> os.replace`` でクラッシュ時にも本ファイルが破損しない。
+    * ファイル命名: ``<input>.iroiro-progress.json``（``<input>`` は入力XMLのフルパス）。
+    * ``input_path`` メタ情報: progress_path でなく入力XMLのパスを記録する（Plan §5.8 v0.3）。
+    * ``input_hash`` 不一致 / JSON decode error は ``ValueError`` で停止する（自動修復しない）。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(slots=True)
+class ProgressData:
+    """``load_existing`` の戻り値（Plan §6.5）。
+
+    Attributes:
+        entries: ``index -> dest`` の辞書（再開時に再利用される訳文）。
+        failed: 失敗した index のリスト（再試行せず保持）。
+        input_hash: 入力XMLの SHA256。
+        api_base: 使用した API エンドポイント。
+        model: 使用したモデル名。
+    """
+
+    entries: dict[int, str]
+    failed: list[int]
+    input_hash: str
+    api_base: str
+    model: str
+
+
+def compute_input_hash(path: Path) -> str:
+    """入力XMLの SHA256 を計算する（hex 文字列、64文字）。
+
+    Args:
+        path: 入力XMLのパス。
+    """
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+class ProgressWriter:
+    """``progress.json`` への並行安全な読み書きを行う。
+
+    ファイル命名: ``<input>.iroiro-progress.json``。
+
+    並行安全性: ``mark_done`` / ``mark_failed`` は ``asyncio.Lock`` で直列化される。
+    同一インスタンス内の ``_data`` を更新しつつ ``_flush`` で原子的書き込みを行う。
+
+    再開: ``load_existing`` で既存ファイルを読み込む。
+    ファイル不在は ``None``。JSON decode error / hash 不一致は ``ValueError``。
+    """
+
+    def __init__(
+        self,
+        progress_path: Path,
+        input_path: Path,
+        input_hash: str,
+        api_base: str,
+        model: str,
+    ) -> None:
+        self._path = progress_path
+        self._input_path = input_path
+        self._input_hash = input_hash
+        self._api_base = api_base
+        self._model = model
+        self._lock = asyncio.Lock()
+        self._data: dict[str, object] = {
+            "input_path": str(input_path),
+            "input_hash": input_hash,
+            "api_base": api_base,
+            "model": model,
+            "entries": {},
+            "failed": [],
+        }
+
+    async def mark_done(self, index: int, dest: str) -> None:
+        """``index`` を訳文 ``dest`` で完了扱いにする。
+
+        entries dict に ``str(index) -> dest`` をセットして ``_flush`` する。
+        """
+        async with self._lock:
+            entries = self._data["entries"]
+            assert isinstance(entries, dict)
+            entries[str(index)] = dest
+            self._flush()
+
+    async def mark_failed(self, index: int) -> None:
+        """``index`` を失敗リストに追記する。
+
+        再試行は行わず、単に ``failed`` リストに append する。
+        （Plan §5.8: resume 時の failed index は再試行しない）
+        """
+        async with self._lock:
+            failed = self._data["failed"]
+            assert isinstance(failed, list)
+            failed.append(index)
+            self._flush()
+
+    def _flush(self) -> None:
+        """原子的書き込み: tmp -> os.replace。
+
+        ``asyncio.Lock`` 内で呼ばれるため同期 I/O で安全。
+        ``tmp`` パスは ``<progress>.json.tmp``。前回クラッシュの残存 ``.tmp`` は上書きされる。
+        """
+        tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+        payload = json.dumps(self._data, ensure_ascii=False, indent=2)
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, self._path)
+
+    def load_existing(self) -> ProgressData | None:
+        """既存の ``progress.json`` を読み込む。
+
+        Returns:
+            ``ProgressData``。ファイルが存在しない場合は ``None``。
+
+        Raises:
+            ValueError: JSON decode error、または ``input_hash`` が一致しない場合。
+                自動修復は行わず、ユーザーにファイル削除を促すことを想定。
+        """
+        if not self._path.exists():
+            return None
+
+        try:
+            raw_text = self._path.read_text(encoding="utf-8")
+        except OSError as e:
+            raise ValueError(f"progress.json read error: {e}") from e
+
+        try:
+            raw = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"progress.json is corrupted (JSON decode error): {e}. "
+                f"Please remove {self._path} and re-run."
+            ) from e
+
+        if not isinstance(raw, dict):
+            raise ValueError(f"progress.json root is not an object: {type(raw).__name__}")
+
+        existing_hash = raw.get("input_hash")
+        if existing_hash != self._input_hash:
+            raise ValueError(
+                f"input_hash mismatch: progress.json has {existing_hash!r}, "
+                f"current input is {self._input_hash!r}. "
+                f"Please remove {self._path} if the input file has changed."
+            )
+
+        raw_entries = raw.get("entries", {})
+        entries: dict[int, str] = {}
+        if isinstance(raw_entries, dict):
+            for k, v in raw_entries.items():
+                try:
+                    entries[int(k)] = str(v)
+                except (TypeError, ValueError):
+                    continue
+
+        raw_failed = raw.get("failed", [])
+        failed: list[int] = []
+        if isinstance(raw_failed, list):
+            for x in raw_failed:
+                try:
+                    failed.append(int(x))
+                except (TypeError, ValueError):
+                    continue
+
+        return ProgressData(
+            entries=entries,
+            failed=failed,
+            input_hash=str(existing_hash),
+            api_base=str(raw.get("api_base", "")),
+            model=str(raw.get("model", "")),
+        )

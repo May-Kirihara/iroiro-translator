@@ -1,0 +1,47 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<SSTXMLRessources>
+  <Params>
+    <Addon>JaMod.esp</Addon>
+    <Source>english</Source>
+    <Dest>japanese</Dest>
+    <Version>2</Version>
+  </Params>
+  <Content>
+    <String List="0">
+      <EDID>CoffinActi</EDID>
+      <REC>ACTI:FULL</REC>
+      <Source>棺</Source>
+      <Dest>棺</Dest>
+    </String>
+    <String List="0">
+      <EDID>MagicNecklace</EDID>
+      <REC>ARMO:FULL</REC>
+      <Source>ネックレス</Source>
+      <Dest>ネックレス</Dest>
+    </String>
+    <String List="0">
+      <EDID>MagicRing</EDID>
+      <REC>ARMO:FULL</REC>
+      <Source>魔法の指輪</Source>
+      <Dest>魔法の指輪</Dest>
+    </String>
+    <String List="0">
+      <EDID>GreetingEntry</EDID>
+      <REC>INFO:RNAM</REC>
+      <Source>こんにちは</Source>
+      <Dest>こんにちは</Dest>
+    </String>
+    <String List="0">
+      <EDID>StreamEntry</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>ストリーム</Source>
+      <Dest>ストリーム</Dest>
+    </String>
+    <String List="0">
+      <EDID>PlainEnglish</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Fireball</Source>
+      <Dest>Fireball</Dest>
+    </String>
+  </Content>
+</SSTXMLRessources>
