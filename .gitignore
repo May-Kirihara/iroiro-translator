@@ -221,3 +221,6 @@ __marimo__/
 *.translated.xml
 *.iroiro-progress.json
 *.iroiro-progress.json.tmp
+
+# サンプル XML（第三者著作物のため git 管理外）
+sample/

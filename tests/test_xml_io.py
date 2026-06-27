@@ -22,6 +22,9 @@ from lxml import etree
 from iroiro.errors import IroiroError
 from iroiro.xml_io import parse_xml, serialize_xml
 
+# T10 skipif 判定用。sample XML は第三者著作物のため git 管理外。
+from tests.conftest import SAMPLE_XML
+
 # ===========================================================================
 # 補助関数: bytes を直接書いた tmp XML を parse するヘルパー
 # ===========================================================================
@@ -293,10 +296,17 @@ def test_T09_empty_source_dest(tiny_xml: Path) -> None:
 # T10: 巨大ファイル（サンプル679件）のメモリ・時間（緩い上限）
 # ===========================================================================
 
+@pytest.mark.skipif(
+    not SAMPLE_XML.exists(),
+    reason="sample/JobsofSkyrim_english_japanese.xml is user-provided (not in git)",
+)
 def test_T10_large_file_parse(sample_xml: Path) -> None:
     """T10: サンプル679件を時間内に parse できること。
 
     メモリ・時間は緩い上限（10秒以内・679件検出）。
+
+    注: sample XML は第三者著作物のため git 管理外。ユーザー環境にファイルが
+    無い場合は skipif でスキップされる。
     """
     import time
 

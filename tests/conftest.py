@@ -61,14 +61,13 @@ def long_source_xml() -> Path:
 
 
 @pytest.fixture(scope="session")
-def sample_subset_xml() -> Path:
-    """sample_subset.xml: 実物 sample から抽出（BOM/CRLF 保持）。"""
-    return FIXTURES_DIR / "sample_subset.xml"
-
-
-@pytest.fixture(scope="session")
 def sample_xml() -> Path:
-    """実物サンプル（679件）。T10 用。"""
+    """実物サンプル（679件）。T10 用。
+
+    注: sample XML は第三者著作物のため git 管理外。ユーザー環境で用意された
+    MOD XML へのパス（SAMPLE_XML）を返す。ファイルが無い場合は T10 が skipif で
+    スキップされる。
+    """
     return SAMPLE_XML
 
 

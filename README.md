@@ -75,6 +75,9 @@ git clone <repository-url> iroiro-translator
 cd iroiro-translator
 ```
 
+> **注意**: リポジトリには翻訳対象のサンプル XML は含まれません（第三者著作物のため git 管理外）。
+> お手持ちの MOD XML（xTranslator 形式の `SSTXMLRessources` v2）を各自で用意してください。
+
 ### 2. 依存関係を同期
 
 ```bash
@@ -140,13 +143,14 @@ iroiro translate INPUT.xml [OPTIONS]
 ### dry-run で処理件数を事前確認
 
 ```bash
-uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml --dry-run
+# sample XML は第三者著作物のため git 管理外。お手持ちの MOD XML で実行してください
+uv run iroiro translate path/to/your_mod.xml --dry-run
 ```
 
 出力例:
 
 ```
-INFO  Parsing input: sample/JobsofSkyrim_english_japanese.xml
+INFO  Parsing input: path/to/your_mod.xml
 INFO  Parsed 679 <String> entries (BOM=True, newline='\r\n', encoding=UTF-8)
 総エントリ数: 679
 翻訳対象: 32
@@ -158,7 +162,7 @@ INFO  Parsed 679 <String> entries (BOM=True, newline='\r\n', encoding=UTF-8)
 ### 翻訳の実行
 
 ```bash
-uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml
+uv run iroiro translate path/to/your_mod.xml
 ```
 
 ### 再開
@@ -166,7 +170,7 @@ uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml
 途中で止まった場合、`--resume` で進捗ファイルから続きを実行できる:
 
 ```bash
-uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml --resume
+uv run iroiro translate path/to/your_mod.xml --resume
 ```
 
 ---
@@ -192,19 +196,19 @@ uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml --resume
 サーバー起動後、別ターミナルで:
 
 ```bash
-uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml
+uv run iroiro translate path/to/your_mod.xml
 ```
 
-- 出力ファイル: `sample/JobsofSkyrim_english_japanese.translated.xml`
-- 進捗ファイル: `sample/JobsofSkyrim_english_japanese.xml.iroiro-progress.json`
+- 出力ファイル: `path/to/your_mod.translated.xml`
+- 進捗ファイル: `path/to/your_mod.xml.iroiro-progress.json`
 
 ### 出力ファイル名の規則
 
 | 種類 | 規則 | 例 |
 |---|---|---|
-| 出力 XML（既定） | `<input>.translated.xml` | `JobsofSkyrim_english_japanese.xml` → `JobsofSkyrim_english_japanese.translated.xml` |
+| 出力 XML（既定） | `<input>.translated.xml` | `your_mod.xml` → `your_mod.translated.xml` |
 | 出力 XML（明示） | `-o PATH` で指定 | `iroiro translate in.xml -o out.xml` |
-| 進捗ファイル | `<input>.iroiro-progress.json` | `JobsofSkyrim_english_japanese.xml.iroiro-progress.json` |
+| 進捗ファイル | `<input>.iroiro-progress.json` | `your_mod.xml.iroiro-progress.json` |
 
 > 進捗ファイルの `<input>` は入力 XML の **フルファイル名**（拡張子含む）である点に注意。
 
@@ -251,7 +255,7 @@ uv run iroiro translate INPUT.xml --api-base http://localhost:11434/v1 --model g
 含まれる場合、`iroiro` はエラーを送出して停止する（v0.1 では非サポート）。
 
 これは内部の正規表現ポスト処理がこれらを破壊する可能性があるための安全措置。
-xTranslator 形式の正規ファイルでは出現しない（サンプル実査で確認済み）。
+xTranslator 形式の正規ファイルでは出現しない（ユーザー提供の MOD XML 実査で確認済み）。
 
 ---
 
@@ -290,7 +294,7 @@ uv run iroiro translate INPUT.xml --concurrency 1
 出力が期待と異なる場合は、入力ファイルのフォーマットを確認すること:
 
 ```bash
-file sample/JobsofSkyrim_english_japanese.xml
+file path/to/your_mod.xml
 # 期待: ... XML 1.0 document, UTF-8 Unicode (with BOM) text, with CRLF line terminators
 ```
 
@@ -300,7 +304,7 @@ file sample/JobsofSkyrim_english_japanese.xml
 これは安全側の挙動。メッセージに従い進捗ファイルを削除して再実行する:
 
 ```bash
-rm sample/JobsofSkyrim_english_japanese.xml.iroiro-progress.json
+rm path/to/your_mod.xml.iroiro-progress.json
 ```
 
 ---

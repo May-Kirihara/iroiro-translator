@@ -26,14 +26,14 @@ Skyrim MOD の xTranslator 形式 XML (`SSTXMLRessources` v2) を入力とし、
 `<Content>/<String>` ごとに `<Source>` の英文を LLM で日本語訳し、
 `<Dest>` に書き戻した XML を出力する **バッチCLI** を作る。
 
-- 入力: `sample/JobsofSkyrim_english_japanese.xml` のような XML
+- 入力: xTranslator 形式 XML（実 MOD データ。第三者著作物のためリポジトリには含まず、ユーザーが各自用意）
 - 出力: 同形式の XML（`<Dest>` のみ差し替え、**BOM/CRLF/宣言も保持**）
 - 副産物: 進捗ファイル（再開用）
 
-## 2. 背景・現状（サンプル実査）
+## 2. 背景・現状（実データ実査）
 
-- README と sample XML のみ。実装コードなし。
-- サンプル実査で判明した事実:
+- README と実 MOD XML（ユーザー提供・第三者著作物のためリポジトリ外）のみ。実装コードなし。
+- 実データ実査で判明した事実:
   - **679** `<String>` エントリ、**4568行**
   - エンコーディング: **UTF-8 with BOM**（先頭 `EF BB BF`）
   - 改行コード: **CRLF**
@@ -134,7 +134,7 @@ iroiro-translator/
 │   │   ├── tiny_crlf_bom.xml   # BOM+CRLFの実物コピー
 │   │   ├── japanese_source.xml # 既に日本語Sourceを含む
 │   │   ├── long_source.xml     # max-chars超過
-│   │   └── sample_subset.xml   # sampleから抽出
+│   │   └── （sample_subset.xml は削除・実データ由来のため）
 │   ├── test_xml_io.py
 │   ├── test_escape.py
 │   ├── test_progress.py
@@ -638,7 +638,7 @@ uv run mypy iroiro
 - Inputs: 本計画書 v0.6、関数シグネチャ契約（§6）
 - Outputs:
   - `tests/conftest.py`
-  - `tests/fixtures/{tiny,tiny_crlf_bom,japanese_source,long_source,sample_subset}.xml`
+  - `tests/fixtures/{tiny,tiny_crlf_bom,japanese_source,long_source,with_cdata,with_comment}.xml`
   - `tests/test_{xml_io,escape,progress,translator,cli}.py`
 - Dependencies: 本計画書承認
 - 並列: なし（直列の第1段）

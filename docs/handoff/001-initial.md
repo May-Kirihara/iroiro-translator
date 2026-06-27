@@ -16,7 +16,7 @@
 | 状態 | done |
 | 日付 | 2026-06-28 |
 | 担当 | PM agent + implementer + ユーザー実機検証 |
-| 概要 | Skyrim MOD xTranslator 形式 XML を OpenAI 互換 LLM で英→日翻訳するバッチ CLI `iroiro` v0.1 の初期実装が完了。WP-1（テスト）/ WP-2（コア）/ WP-3（ドキュメント）の3 Work Package を直列で完了。73件のテスト（T1-T53 + XXE対策 T54/T55 + post-processing 補助）が全て green。サンプル XML 679エントリで dry-run 正常動作を確認済み。**ユーザー環境で実 LLM（Gemma4 12B / llama.cpp）による E2E 翻訳が成功**し、`sample/JobsofSkyrim_english_japanese.xml.iroiro-progress.json` と `sample/JobsofSkyrim_english_japanese.translated.xml` が正常生成されることを確認済み。 |
+| 概要 | Skyrim MOD xTranslator 形式 XML を OpenAI 互換 LLM で英→日翻訳するバッチ CLI `iroiro` v0.1 の初期実装が完了。WP-1（テスト）/ WP-2（コア）/ WP-3（ドキュメント）の3 Work Package を直列で完了。73件のテスト（T1-T53 + XXE対策 T54/T55 + post-processing 補助）が全て green。ユーザー提供の MOD XML（679エントリ）で dry-run 正常動作を確認済み。**ユーザー環境で実 LLM（Gemma4 12B / llama.cpp）による E2E 翻訳が成功**し、progress / 出力XML が正常生成されることを確認済み。 |
 
 ---
 
@@ -59,7 +59,6 @@
 - `tests/fixtures/tiny_crlf_bom.xml` — BOM + CRLF の実物コピー
 - `tests/fixtures/japanese_source.xml` — 既に日本語の Source を含む
 - `tests/fixtures/long_source.xml` — `max-chars` 超過
-- `tests/fixtures/sample_subset.xml` — サンプルから抽出
 - `tests/fixtures/with_comment.xml` — XML コメント検出用
 - `tests/fixtures/with_cdata.xml` — CDATA 検出用
 
@@ -89,7 +88,7 @@
 ## 変更理由
 
 Skyrim MOD の英語版 XML を日本語化する作業は、xTranslator で手動で行うにはエントリ数が
-膨大（サンプルだけで 679件）で反復作業が辛い。ローカル LLM でバッチ翻訳しつつ、
+膨大（ユーザー提供の MOD XML だけで 679件）で反復作業が辛い。ローカル LLM でバッチ翻訳しつつ、
 xTranslator 形式のバイトレベルフォーマット（BOM/CRLF/宣言）を厳密に保持して相互運用性を
 保つツールが欲しい、というユーザー要件を満たすため。
 
@@ -124,7 +123,7 @@ xTranslator 形式のバイトレベルフォーマット（BOM/CRLF/宣言）�
 | Scope | `iroiro/` パッケージ本体 + `pyproject.toml` + `.python-version` + `.gitignore` 追記 |
 | Status | done |
 | Files | `iroiro/` 11モジュール, `pyproject.toml`, `.python-version`, `.gitignore` |
-| Verification | `uv run pytest` 全 green、`uv run iroiro translate sample/...xml --dry-run` で 679件正常表示 |
+| Verification | `uv run pytest` 全 green、ユーザー提供の MOD XML で dry-run 実行時に 679件正常表示 |
 | Remaining risks | medium。実 LLM での品質検証が未実施。llama.cpp の model alias はユーザー環境依存 |
 
 ### WP-3-docs
@@ -162,7 +161,6 @@ tests/fixtures/tiny.xml
 tests/fixtures/tiny_crlf_bom.xml
 tests/fixtures/japanese_source.xml
 tests/fixtures/long_source.xml
-tests/fixtures/sample_subset.xml
 tests/fixtures/with_comment.xml
 tests/fixtures/with_cdata.xml
 tests/test_cli.py
@@ -209,8 +207,8 @@ uv run pytest --tb=no -q
 ### ユーザー環境で実施済み（2026-06-28）
 
 - **実 LLM による E2E 翻訳検証** ✅
-  - ユーザー環境（Gemma4 12B Q4_K_M / llama.cpp server ポート8081）で `sample/JobsofSkyrim_english_japanese.xml` を処理。
-  - `sample/JobsofSkyrim_english_japanese.xml.iroiro-progress.json`（progress）と `sample/JobsofSkyrim_english_japanese.translated.xml`（出力XML）が正常生成されることを確認。
+  - ユーザー環境（Gemma4 12B Q4_K_M / llama.cpp server ポート8081）でユーザー提供の MOD XML（679エントリ）を処理。
+  - progress ファイル（`<input>.iroiro-progress.json`）と出力 XML（`<input>.translated.xml`）が正常生成されることを確認。
   - モックベースで検証した protocol/post-processing/エラーハンドリングが実機でもそのまま成立した。
 
 ---
@@ -234,11 +232,11 @@ uv run pytest --tb=no -q
 
 実施済み:
 
-- `uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml --dry-run` で
+- ユーザー提供の MOD XML（679エントリ）で dry-run を実行し、
   **679エントリ**が正常にパースされ、件数集計（翻訳対象 32 / スキップ 647 / 長文超過 0）
   が表示されることを確認。BOM=True / `newline='\r\n'` / encoding=UTF-8 も正しく検出。
 - `uv run iroiro translate --help` で全 CLI フラグとデフォルト値が想定通り表示されることを確認。
-- `file sample/JobsofSkyrim_english_japanese.xml` で入力が UTF-8 BOM + CRLF であることを確認。
+- `file <input>.xml` で入力が UTF-8 BOM + CRLF であることを確認。
 
 未実施:
 
@@ -260,7 +258,7 @@ uv run pytest --tb=no -q
      （README のトラブルシュートに明記）。
 
 3. **長文 BOOK エントリのスキップ**
-   - `--max-chars`（既定 4000）超過の `<Source>` はスキップされる。サンプル（JobsofSkyrim）では
+   - `--max-chars`（既定 4000）超過の `<Source>` はスキップされる。ユーザー提供の MOD XML では
      該当なし。長い書籍本文を持つ MOD では一部エントリが未翻訳で残る可能性がある。
 
 ---
@@ -293,9 +291,9 @@ uv run pytest --tb=no -q
 ### 出力・進捗ファイルの削除
 
 ```bash
-# 入力: sample/JobsofSkyrim_english_japanese.xml の場合
-rm sample/JobsofSkyrim_english_japanese.translated.xml
-rm sample/JobsofSkyrim_english_japanese.xml.iroiro-progress.json
+# 入力: path/to/your_mod.xml の場合
+rm path/to/your_mod.translated.xml
+rm path/to/your_mod.xml.iroiro-progress.json
 ```
 
 一般形:
@@ -327,12 +325,12 @@ rm <input_full_name>.iroiro-progress.json
    ```bash
    ./llama-server -m model.gguf --port 8081
    ```
-2. 小さなサンプルで試す:
+2. 小さな MOD XML で試す:
    ```bash
-   uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml --dry-run
-   uv run iroiro translate sample/JobsofSkyrim_english_japanese.xml
+   uv run iroiro translate path/to/your_mod.xml --dry-run
+   uv run iroiro translate path/to/your_mod.xml
    ```
-3. 出力 `sample/JobsofSkyrim_english_japanese.translated.xml` を xTranslator で開いて互換性確認。
+3. 出力 `path/to/your_mod.translated.xml` を xTranslator で開いて互換性確認。
 4. `model` 不一致エラーが出たら `--model <alias>` を調整。
 5. タイムアウトが出たら `--timeout 300` 等に増やす。
 
