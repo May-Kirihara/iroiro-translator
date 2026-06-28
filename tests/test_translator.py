@@ -1,5 +1,8 @@
 """test_translator.py — Translator / LLM 翻訳のテスト（T26-T34, T41-T44, T51）。
 
+v0.2 追加: T56-T63（``is_translation_needed`` REC 型拡張）, T71-T76（``_parse_skip_records``）,
+T81/T81b（``compute_skip_records_fingerprint``）。
+
 対象モジュール: `iroiro/translator.py`
 シグネチャ契約（Plan §6.4）:
     @dataclass(slots=True)
@@ -16,8 +19,11 @@
         async def translate_entry(self, source: str, rec: str) -> str: ...
         async def aclose(self) -> None: ...
 
-    def is_translation_needed(source: str) -> bool: ...
+    def is_translation_needed(source: str, rec: str = "", skip_records: frozenset[str] | None = None) -> bool: ...
+    def _parse_skip_records(text: str) -> frozenset[str]: ...
     def contains_japanese(text: str) -> bool: ...
+
+    DEFAULT_SKIP_RECORDS: frozenset[str]  # v0.2 追加・12件のデフォルトスキップ REC 型
 
     ※ `client` 引数はテスト容易性のための DI（WP-2 実装に委ねる）。Plan §6.4 に
        `__init__(self, cfg)` とあるが、`httpx.MockTransport` を注入するための
@@ -35,6 +41,9 @@
   - HTTP リトライ（500×2→200 成功、500 連続で失敗、タイムアウト）
   - 長文スキップ（max_chars 超過）
   - Source 言語判定（空/空白/日本語/non-ASCII 英語）
+  - v0.2: 翻訳スキップ REC 型（デフォルト12件・空集合・```:FULL``` 以外）
+  - v0.2: ``--skip-records`` カンマ区切りパーサーのエッジケース
+  - v0.2: ``compute_skip_records_fingerprint``（空集合は ``""`` 特例）
 """
 from __future__ import annotations
 
@@ -44,7 +53,15 @@ from openai import AsyncOpenAI
 
 from iroiro.errors import IroiroError
 from iroiro.models import StringEntry
-from iroiro.translator import ApiConfig, Translator, contains_japanese, is_translation_needed
+from iroiro.progress import compute_skip_records_fingerprint
+from iroiro.translator import (
+    DEFAULT_SKIP_RECORDS,
+    ApiConfig,
+    Translator,
+    _parse_skip_records,
+    contains_japanese,
+    is_translation_needed,
+)
 
 # ===========================================================================
 # モックヘルパー
@@ -610,3 +627,209 @@ async def test_postprocess_trim_whitespace() -> None:
         assert result == "火の玉", f"前後空白トリム後: {result!r}"
     finally:
         await translator.aclose()
+
+
+# ===========================================================================
+# v0.2: T56-T63 — is_translation_needed の REC 型スキップ拡張
+#
+# Plan §5.1: is_translation_needed(source, rec="", skip_records=None)
+#   * rec != "" かつ rec in skip_records → False（スキップ）
+#   * それ以外は空/空白/日本語混入の既存判定にフォールバック
+#   * skip_records=None の場合は DEFAULT_SKIP_RECORDS を使用
+# ===========================================================================
+
+
+def test_T56_default_skip_hdpt_full() -> None:
+    """T56: HDPT:FULL はデフォルトスキップリストに入っている → False。
+
+    skip_records 省略時は DEFAULT_SKIP_RECORDS が使われる。
+    """
+    assert is_translation_needed("Hello", "HDPT:FULL") is False
+
+
+def test_T57_empty_skip_records_translates() -> None:
+    """T57: skip_records=frozenset() の場合は HDPT:FULL でも翻訳対象 → True。
+
+    ``--no-skip-default-records`` 単独指定時の挙動に対応。
+    """
+    assert is_translation_needed("Hello", "HDPT:FULL", skip_records=frozenset()) is True
+
+
+def test_T58_default_skip_mgef_full() -> None:
+    """T58: MGEF:FULL はデフォルトスキップリストに入っている → False。"""
+    assert is_translation_needed("Hello", "MGEF:FULL") is False
+
+
+def test_T59_weap_full_not_in_default_list() -> None:
+    """T59: WEAP:FULL はデフォルトスキップリストに入っていない → True（翻訳対象）。"""
+    assert is_translation_needed("Iron Sword", "WEAP:FULL") is True
+
+
+def test_T60_bptd_bptn_skipped() -> None:
+    """T60: BPTD:BPTN（```:FULL``` 以外）もデフォルトスキップリストで機能 → False。"""
+    assert is_translation_needed("Head", "BPTD:BPTN") is False
+
+
+def test_T61_empty_source_skipped_even_if_rec_not_in_list() -> None:
+    """T61: 空文字列 Source は REC 型にかかわらずスキップ → False。
+
+    REC 型スキップより空文字スキップが優先される（フォールバック判定）。
+    """
+    assert is_translation_needed("", "HDPT:FULL") is False
+    # REC 型がリスト外でも空ならスキップ
+    assert is_translation_needed("", "WEAP:FULL") is False
+
+
+def test_T62_japanese_source_skipped_even_if_rec_not_in_list() -> None:
+    """T62: 日本語 Source は REC 型にかかわらずスキップ → False。
+
+    REC 型がリスト外でも日本語ならスキップ（既存の contains_japanese 判定への
+    フォールバック）。これにより REC skip と言語 skip が重複しない。
+    """
+    assert is_translation_needed("棺", "HDPT:FULL") is False
+    # REC 型がリスト外でも日本語ならスキップ
+    assert is_translation_needed("既存の日本語", "WEAP:FULL") is False
+
+
+def test_T63_rec_empty_backward_compat() -> None:
+    """T63: rec="" の場合は REC 型スキップが適用されず、既存の言語判定のみ → True。
+
+    後方互換性: v0.1 の ``is_translation_needed(source)`` と同じ挙動。
+    """
+    assert is_translation_needed("Hello", rec="") is True
+    # rec 省略も同じ
+    assert is_translation_needed("Hello") is True
+
+
+def test_T63b_default_skip_records_contains_12_entries() -> None:
+    """T63 補足: DEFAULT_SKIP_RECORDS は12件の REC 型を含む。
+
+    Plan §4 のリストと一致することを検証。
+    """
+    expected = frozenset({
+        "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+        "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+        "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+    })
+    assert DEFAULT_SKIP_RECORDS == expected, (
+        f"DEFAULT_SKIP_RECORDS は12件: 実際 {len(DEFAULT_SKIP_RECORDS)}件"
+    )
+    assert len(DEFAULT_SKIP_RECORDS) == 12
+
+
+def test_T63c_custom_skip_records_used_when_provided() -> None:
+    """T63 補足: skip_records を明示的に渡した場合は DEFAULT_SKIP_RECORDS は使われない。
+
+    ``--no-skip-default-records --skip-records "MGEF:FULL"`` のケースに対応。
+    MGEF:FULL はカスタムリストに入っているが、HDPT:FULL は入っていない。
+    """
+    custom = frozenset({"MGEF:FULL"})
+    # MGEF:FULL はカスタムリストに入っている → スキップ
+    assert is_translation_needed("Hello", "MGEF:FULL", skip_records=custom) is False
+    # HDPT:FULL は DEFAULT_SKIP_RECORDS に入っているが、custom を渡した場合は適用外 → 翻訳対象
+    assert is_translation_needed("Hello", "HDPT:FULL", skip_records=custom) is True
+
+
+# ===========================================================================
+# v0.2: T71-T76 — _parse_skip_records パーサー
+#
+# Plan §5.2b: ``--skip-records`` のカンマ区切りテキストを frozenset に変換。
+#   * カンマで分割
+#   * 各要素は strip（前後空白を許容）
+#   * 空文字列要素は無視（"A,,B" → {A, B}）
+#   * 重複は自動排除（frozenset の性質）
+#   * 大文字小文字は区別しない（hdpt:full → HDPT:FULL に正規化）
+# ===========================================================================
+
+
+def test_T71_parse_basic_two_entries() -> None:
+    """T71: 基本的な2要素パース → frozenset。"""
+    assert _parse_skip_records("HDPT:FULL,FURN:FULL") == frozenset({"HDPT:FULL", "FURN:FULL"})
+
+
+def test_T72_parse_whitespace_element_ignored() -> None:
+    """T72: 空白要素が混入しても無視される → {HDPT:FULL, FURN:FULL}。"""
+    assert _parse_skip_records("HDPT:FULL, ,FURN:FULL") == frozenset({"HDPT:FULL", "FURN:FULL"})
+
+
+def test_T73_parse_duplicated_element_deduped() -> None:
+    """T73: 重複要素は自動で排除される → {HDPT:FULL}。"""
+    assert _parse_skip_records("HDPT:FULL,HDPT:FULL") == frozenset({"HDPT:FULL"})
+
+
+def test_T74_parse_lowercase_normalized_to_uppercase() -> None:
+    """T74: 小文字は大文字に正規化される → {HDPT:FULL}。"""
+    assert _parse_skip_records("hdpt:full") == frozenset({"HDPT:FULL"})
+
+
+def test_T75_parse_empty_string_returns_empty_frozenset() -> None:
+    """T75: 空文字列 → frozenset()。"""
+    assert _parse_skip_records("") == frozenset()
+
+
+def test_T76_parse_whitespace_only_returns_empty_frozenset() -> None:
+    """T76: 空白のみ → frozenset()。"""
+    assert _parse_skip_records("   ") == frozenset()
+
+
+def test_T76b_parse_mixed_case_and_whitespace() -> None:
+    """T76 補足: 複合ケース（小文字・空白・重複）→ 正規化されて {HDPT:FULL, MGEF:FULL}。"""
+    assert _parse_skip_records(" hdpt:full , MGEF:FULL , hdpt:full ") == frozenset({
+        "HDPT:FULL", "MGEF:FULL",
+    })
+
+
+# ===========================================================================
+# v0.2: T81/T81b — compute_skip_records_fingerprint 単体
+#
+# Plan §5.4: 空集合は "" を返す特例。非空は SHA256(sorted canonical)。
+# v0.1 progress.json との互換性のため、空集合は SHA256(b"") と区別する。
+# ===========================================================================
+
+
+def test_T81_empty_frozenset_returns_empty_string() -> None:
+    """T81: compute_skip_records_fingerprint(frozenset()) → ""（空集合の特例）。
+
+    Plan §5.4: 空集合の場合は空文字列を返す。これは v0.1 progress.json
+    （fingerprint フィールド無し = "" 扱い）との互換性のため。
+    SHA256(b"") = "e3b0c442..." と区別するための特例扱い。
+    """
+    assert compute_skip_records_fingerprint(frozenset()) == ""
+
+
+def test_T81b_non_empty_frozenset_returns_sha256_of_sorted_canonical() -> None:
+    """T81b: 非空集合は SHA256("\\n".join(sorted(elements))) の hex を返す。
+
+    順序に依存しない（frozenset は順序無し）。SHA256(b"") とも異なる。
+    """
+    import hashlib
+
+    fp = compute_skip_records_fingerprint(frozenset({"HDPT:FULL"}))
+    expected = hashlib.sha256(b"HDPT:FULL").hexdigest()
+    assert fp == expected, f"SHA256('HDPT:FULL'): {fp} vs {expected}"
+    # 空集合の特例（""）とは異なる
+    assert fp != ""
+    # SHA256(b"") とも異なる（要素が1つあっても canon 化されて別の値）
+    assert fp != hashlib.sha256(b"").hexdigest()
+
+
+def test_T81c_fingerprint_independent_of_order() -> None:
+    """T81 補足: 異なる順序で挿入しても同じ fingerprint（sorted canonical のため）。"""
+    fp1 = compute_skip_records_fingerprint(frozenset({"HDPT:FULL", "MGEF:FULL", "RACE:FULL"}))
+    fp2 = compute_skip_records_fingerprint(frozenset({"RACE:FULL", "HDPT:FULL", "MGEF:FULL"}))
+    assert fp1 == fp2, "順序に依存しない"
+
+
+def test_T81d_default_skip_records_fingerprint_stable() -> None:
+    """T81 補足: DEFAULT_SKIP_RECORDS の fingerprint は安定した固定値。
+
+    resume 検証で v0.2 のデフォルト動作が一貫していることを保証する回帰テスト。
+    """
+    import hashlib
+
+    expected = hashlib.sha256(
+        "\n".join(sorted(DEFAULT_SKIP_RECORDS)).encode("utf-8")
+    ).hexdigest()
+    assert compute_skip_records_fingerprint(DEFAULT_SKIP_RECORDS) == expected
+    # 64文字の hex
+    assert len(expected) == 64

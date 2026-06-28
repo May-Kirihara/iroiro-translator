@@ -19,6 +19,8 @@ class RunConfig:
         resume: ``--resume`` フラグ。progress.json を読んで続きから。
         dry_run: ``--dry-run`` フラグ。LLM を呼ばず件数表示のみ。
         verbose: ``-v`` フラグ。詳細ログ。
+        skip_records: スキップ対象 REC 型のセット（v0.2 追加）。
+            ``--no-skip-default-records`` / ``--skip-records`` から構築される。
     """
 
     input_path: Path
@@ -27,3 +29,4 @@ class RunConfig:
     resume: bool
     dry_run: bool
     verbose: bool
+    skip_records: frozenset[str]

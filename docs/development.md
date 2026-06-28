@@ -30,7 +30,7 @@ uv sync           # dev extras（pytest / ruff / mypy）を含めて依存関係
 ### テスト全実行
 
 ```bash
-uv run pytest                          # 73 テスト
+uv run pytest                          # 109 テスト（v0.1: 73 + v0.2: 36）
 uv run pytest -k "xml_io"              # 個別実行（キーワード指定）
 uv run pytest --tb=no -q               # 簡易出力
 ```
@@ -88,11 +88,11 @@ iroiro/
 
 | テストファイル | 対象 |
 |---|---|
-| `tests/test_xml_io.py` | XML I/O 周辺（T1-T10, T47-T53）。round-trip・BOM/CRLF/宣言保持・CDATA/comment 検出・空要素展開 |
+| `tests/test_xml_io.py` | XML I/O 周辺（T1-T10, T47-T53, T68）。round-trip・BOM/CRLF/宣言保持・CDATA/comment 検出・空要素展開 |
 | `tests/test_escape.py` | プレースホルダ検出・整合性検証（T11-T18, T45） |
-| `tests/test_progress.py` | 並行安全な progress.json 読み書き（T19-T25, T46, T50） |
-| `tests/test_translator.py` | 翻訳エンジン・post-processing・リトライ（T26-T34, T41-T44, T51） |
-| `tests/test_cli.py` | E2E（T36-T40）。`CliRunner` 経由で `translate` サブコマンドを検証 |
+| `tests/test_progress.py` | 並行安全な progress.json 読み書き（T19-T25, T46, T50, T77-T80, T83） |
+| `tests/test_translator.py` | 翻訳エンジン・post-processing・リトライ（T26-T34, T41-T44, T51, T56-T63, T71-T76, T81/T81b） |
+| `tests/test_cli.py` | E2E（T36-T40, T64-T67, T69-T70, T82）。`CliRunner` 経由で `translate` サブコマンドを検証 |
 
 ### 2. フィクスチャ（`tests/fixtures/`）
 
@@ -103,6 +103,7 @@ XML I/O の検証用に小さなサンプル XML を同梱（実データ由来�
 - `japanese_source.xml` — 既に日本語の Source を含む
 - `long_source.xml` — `max-chars` 超過
 - `with_comment.xml` / `with_cdata.xml` — コメント・CDATA 検出用
+- `skip_records.xml` — HDPT/WEAP/MGEF/RACE/BPTD/ACTI/空/日本語 の8エントリを含むテスト用 XML（BOM + CRLF + `standalone="yes"`）
 
 ### 3. E2E（実 LLM）
 
@@ -156,15 +157,13 @@ Conventional Commits 風のプレフィックスを使用:
 
 v0.1 は英→日バッチ翻訳の安定版。以降は以下を予定（PR 歓迎）:
 
-### v0.2 予定
+### v0.2（✅ 完了）
 
-- **用語集機能** — JSON / YAML で用語の統一訳を指定できる仕組み。`Translator` と
-  `_build_user_message` が自然な拡張点
-- **長文 BOOK の自動分割** — `--max-chars` 超過時にチャンク化して翻訳する機能
-- **実 LLM での品質レビュー用 diff 出力** — 人間がレビューしやすい差分形式
+- **翻訳スキップ REC 型** — `DEFAULT_SKIP_RECORDS`（12件）+ `--no-skip-default-records` / `--skip-records` CLI フラグ。詳細は [docs/plans/002-skip-records.md](plans/002-skip-records.md) と [docs/handoff/002-skip-records.md](handoff/002-skip-records.md)。
 
-### 将来
+### v0.3 以降（予定）
 
-- `SSTXMLRessources` v3 対応
-- `Interface/*.txt` 等の他形式対応
-- 英→日以外の対訳方向
+- 用語集機能（JSON/YAML形式・人間メンテ可能）
+- 長文 BOOK の自動分割
+- 実 LLM での品質レビュー用 diff 出力
+- SSTXMLRessources v3 / Interface/*.txt 対応

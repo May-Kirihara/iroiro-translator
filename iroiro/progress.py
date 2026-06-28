@@ -30,6 +30,8 @@ class ProgressData:
         input_hash: 入力XMLの SHA256。
         api_base: 使用した API エンドポイント。
         model: 使用したモデル名。
+        skip_records_fingerprint: 使用した skip_records の fingerprint（v0.2 追加）。
+            v0.1 形式の progress.json から読み込んだ場合は ``""``。
     """
 
     entries: dict[int, str]
@@ -37,6 +39,7 @@ class ProgressData:
     input_hash: str
     api_base: str
     model: str
+    skip_records_fingerprint: str
 
 
 def compute_input_hash(path: Path) -> str:
@@ -50,6 +53,19 @@ def compute_input_hash(path: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def compute_skip_records_fingerprint(skip_records: frozenset[str]) -> str:
+    """skip_records の SHA256（hex）を計算する（Plan §5.4）。
+
+    ソートしてから計算することで順序に依存しない。
+    **空集合の場合は空文字列 ``""`` を返す**（v0.1 progress.json との互換性のため）。
+    ※ SHA256(b"") = ``"e3b0c442..."`` と区別するため、空集合は特例扱い。
+    """
+    if not skip_records:
+        return ""
+    canonical = "\n".join(sorted(skip_records))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class ProgressWriter:
@@ -71,18 +87,21 @@ class ProgressWriter:
         input_hash: str,
         api_base: str,
         model: str,
+        skip_records_fingerprint: str,
     ) -> None:
         self._path = progress_path
         self._input_path = input_path
         self._input_hash = input_hash
         self._api_base = api_base
         self._model = model
+        self._skip_records_fingerprint = skip_records_fingerprint
         self._lock = asyncio.Lock()
         self._data: dict[str, object] = {
             "input_path": str(input_path),
             "input_hash": input_hash,
             "api_base": api_base,
             "model": model,
+            "skip_records_fingerprint": skip_records_fingerprint,
             "entries": {},
             "failed": [],
         }
@@ -128,7 +147,8 @@ class ProgressWriter:
             ``ProgressData``。ファイルが存在しない場合は ``None``。
 
         Raises:
-            ValueError: JSON decode error、または ``input_hash`` が一致しない場合。
+            ValueError: JSON decode error、``input_hash`` が一致しない場合、
+                または ``skip_records_fingerprint`` が現在の設定と一致しない場合。
                 自動修復は行わず、ユーザーにファイル削除を促すことを想定。
         """
         if not self._path.exists():
@@ -158,6 +178,18 @@ class ProgressWriter:
                 f"Please remove {self._path} if the input file has changed."
             )
 
+        # v0.2: skip_records_fingerprint 検証（Plan §5.4）。
+        # v0.1 形式の progress.json は同フィールドを持たないため ``""`` と解釈する。
+        # 現在の fingerprint と一致しない場合は ValueError で停止（input_hash と同じパターン）。
+        existing_skip_fp = str(raw.get("skip_records_fingerprint", ""))
+        if existing_skip_fp != self._skip_records_fingerprint:
+            raise ValueError(
+                f"skip_records fingerprint mismatch: "
+                f"progress.json has {existing_skip_fp!r}, "
+                f"current skip_records is {self._skip_records_fingerprint!r}. "
+                f"Please remove {self._path} if skip records have changed."
+            )
+
         raw_entries = raw.get("entries", {})
         entries: dict[int, str] = {}
         if isinstance(raw_entries, dict):
@@ -182,4 +214,5 @@ class ProgressWriter:
             input_hash=str(existing_hash),
             api_base=str(raw.get("api_base", "")),
             model=str(raw.get("model", "")),
+            skip_records_fingerprint=existing_skip_fp,
         )

@@ -22,9 +22,14 @@ Skyrim MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods
 - **BOM / CRLF / `standalone="yes"` 宣言の保持** — xTranslator 互換
 - **プレースホルダ保護** — `<alias=NAME>`, `<br>`, `%{...}`, `\n`, `\r`, `#` 等の出現回数を検証
 - **失敗時の `<Dest>` 保護** — 翻訳失敗・スキップ時は元の `<Dest>` を保持し、`<Source>` で上書きしない
+- **翻訳スキップ REC 型**（v0.2）— 内部管理用レコード（`HDPT:FULL` 等12件）を自動スキップ。`--no-skip-default-records` / `--skip-records` で制御。詳細は [docs/usage.md](docs/usage.md)
 - **再開機能**（`--resume`） — 進捗ファイルから続きを実行
 - **dry-run モード**（`--dry-run`） — LLM を呼ばず処理件数のみ表示
 - **並列実行**（`--concurrency`） と **HTTP タイムアウト設定**（`--timeout`）
+
+> **⚠️ v0.1 からの動作変更**: v0.2 では内部管理用 REC 型（`HDPT:FULL` 等12件）が
+> **デフォルトで翻訳スキップ** されるようになりました。v0.1 と同じ動作を維持したい場合は
+> `--no-skip-default-records` フラグを指定してください。詳細は [docs/usage.md](docs/usage.md)。
 
 ---
 
@@ -77,8 +82,9 @@ uv run iroiro translate path/to/your_mod.xml --dry-run
 INFO  Parsing input: path/to/your_mod.xml
 INFO  Parsed 679 <String> entries (BOM=True, newline='\r\n', encoding=UTF-8)
 総エントリ数: 679
-翻訳対象: 32
-スキップ（空/日本語混入）: 647
+翻訳対象: 31
+スキップ（REC 型）: 6
+スキップ（空/日本語混入）: 642
 スキップ（長文超過）: 0
 --dry-run: LLM を呼ばず終了します
 ```
@@ -108,8 +114,10 @@ CLI フラグ全一覧・設定例・トラブルシュートは [詳細な使�
 - [設計判断](docs/design.md) — アーキテクチャ・XML 安全性・`<Dest>` 保護ポリシー・制限事項
 - [詳細な使い方](docs/usage.md) — CLI フラグ全一覧・設定例・トラブルシュート
 - [開発者向け](docs/development.md) — 開発環境・テスト・モジュール構成・ロードマップ
-- [実装計画](docs/plans/001-initial.md) — v0.1 初期実装の設計判断・却下代替案の経緯
-- [引き継ぎ](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
+- [実装計画 v0.1](docs/plans/001-initial.md) — v0.1 初期実装の設計判断・却下代替案の経緯
+- [実装計画 v0.2](docs/plans/002-skip-records.md) — v0.2 翻訳スキップ REC 型の設計判断
+- [引き継ぎ v0.1](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
+- [引き継ぎ v0.2](docs/handoff/002-skip-records.md) — v0.2 完了時の引き継ぎメモ・検証結果
 
 ---
 

@@ -24,6 +24,8 @@ iroiro translate INPUT.xml [OPTIONS]
 | `--timeout` | FLOAT | `120.0` | 1リクエストの読み出しタイムアウト（秒） |
 | `--resume` | FLAG | `False` | `progress.json` があれば再開 |
 | `--dry-run` | FLAG | `False` | LLM を呼ばず処理件数のみ表示 |
+| `--no-skip-default-records` | FLAG | `False` | デフォルトの12件スキップを無効化（全 REC 型を翻訳対象にする）（v0.2） |
+| `--skip-records` | TEXT | `""` | 追加スキップ REC 型（カンマ区切り・例: `"LCTN:FULL,ACTI:FULL"`）（v0.2） |
 | `-v`, `--verbose` | FLAG | `False` | 詳細ログ（DEBUG レベル） |
 | `--help` | — | — | ヘルプを表示して終了 |
 
@@ -62,8 +64,9 @@ uv run iroiro translate path/to/your_mod.xml --dry-run
 INFO  Parsing input: path/to/your_mod.xml
 INFO  Parsed 679 <String> entries (BOM=True, newline='\r\n', encoding=UTF-8)
 総エントリ数: 679
-翻訳対象: 32
-スキップ（空/日本語混入）: 647
+翻訳対象: 31
+スキップ（REC 型）: 6
+スキップ（空/日本語混入）: 642
 スキップ（長文超過）: 0
 --dry-run: LLM を呼ばず終了します
 ```
@@ -81,7 +84,7 @@ uv run iroiro translate path/to/your_mod.xml
 完了時のサマリ:
 
 ```
-完了: translated=32, failed=0, skipped=647 / total=679
+完了: translated=31, failed=0, skipped=648 / total=679
 出力: path/to/your_mod.translated.xml
 進捗: path/to/your_mod.xml.iroiro-progress.json
 ```
@@ -101,7 +104,88 @@ uv run iroiro translate path/to/your_mod.xml --resume
 - 既存 `entries` の index はスキップ（`state=translated`、訳文を再利用）
 - 既存 `failed` の index は再試行せず保持（`state=failed`、元の `<Dest>` を保持）
 - `input_hash`（SHA256）が不一致 → 停止（入力 XML を変更した場合）
+- `skip_records_fingerprint` が不一致 → 停止（`--no-skip-default-records` / `--skip-records` を変更した場合）（v0.2）
 - JSON decode error → 停止（ユーザーにファイル削除を促す）
+
+---
+
+## 翻訳スキップ REC 型（v0.2）
+
+Skyrim MOD の XML（`SSTXMLRessources` v2）で、`<REC>` が **内部管理用** レコード型の `<String>` は
+翻訳すると MOD が誤動作する可能性があるため、デフォルトで **12件の REC 型** をスキップ対象にする。
+
+### デフォルトスキップリスト（12件）
+
+| REC | 用途 |
+|---|---|
+| `HDPT:FULL` | Head Part name（頭部パーツ名） |
+| `FURN:FULL` | Furniture name（家具名） |
+| `CLAS:FULL` | Class name（クラス名） |
+| `DOOR:FULL` | Door name（ドア名） |
+| `FACT:FULL` | Faction name（派閥名） |
+| `CLFM:FULL` | Color Form name（色フォーム名） |
+| `TREE:FULL` | Tree name（木名） |
+| `MGEF:FULL` | Magic Effect name（魔法効果名） |
+| `RACE:FULL` | Race name（種族名） |
+| `EXPL:FULL` | Explosion name（爆発名） |
+| `HAZD:FULL` | Hazard name（危険物名） |
+| `BPTD:BPTN` | Body Part Data name（ボディパーツ名） |
+
+スキップされたエントリの `<Dest>` は元の値を保持し、`<Source>` で上書きされない（他のスキップ・失敗ケースと同じ挙動）。
+
+### 制御方法
+
+デフォルト動作（フラグ無し）は上記12件をスキップする。以下の3パターンで制御可能:
+
+#### 1. デフォルト + 追加スキップ
+
+`--skip-records` でデフォルト12件に追加してスキップ（OR）:
+
+```bash
+# デフォルト12件 + LCTN:FULL と ACTI:FULL を追加スキップ
+uv run iroiro translate INPUT.xml --skip-records "LCTN:FULL,ACTI:FULL"
+```
+
+#### 2. デフォルト無効化 + 全 REC 型を翻訳
+
+`--no-skip-default-records` 単独で、全 REC 型を翻訳対象にする（v0.1 互換動作）:
+
+```bash
+uv run iroiro translate INPUT.xml --no-skip-default-records
+```
+
+#### 3. デフォルト無効化 + 特定 REC 型のみスキップ
+
+`--no-skip-default-records` + `--skip-records` の組合せで、デフォルトを無効化した上で
+特定 REC 型のみスキップ:
+
+```bash
+# MGEF:FULL（魔法効果名）だけをスキップし、他は全て翻訳
+uv run iroiro translate INPUT.xml --no-skip-default-records --skip-records "MGEF:FULL"
+```
+
+#### `MGEF:FULL` と `RACE:FULL` だけを翻訳したい場合
+
+これらはデフォルトスキップリストに入っているが、翻訳を **希望する** ユーザーも多い。
+デフォルト12件のうち両者以外を再指定することで実現できる:
+
+```bash
+uv run iroiro translate INPUT.xml \
+  --no-skip-default-records \
+  --skip-records "HDPT:FULL,FURN:FULL,CLAS:FULL,DOOR:FULL,FACT:FULL,CLFM:FULL,TREE:FULL,EXPL:FULL,HAZD:FULL,BPTD:BPTN"
+```
+
+### 仕様の細かい点
+
+- `--skip-records` は **カンマ区切り**。各要素は前後空白を許容し、空要素は無視される。
+- 大文字小文字は区別しない（`hdpt:full` は `HDPT:FULL` に正規化される）。
+- 重複指定は自動で排除される。
+- `skip_records_fingerprint`（SHA256 of sorted canonical）が `progress.json` に保存され、
+  `--resume` 時に検証される。`--no-skip-default-records` / `--skip-records` を変更した場合は
+  `ValueError` で停止する（`input_hash` と同じパターン）。
+- v0.1 で作成された `progress.json`（`skip_records_fingerprint` フィールド無し = `""` 扱い）は、
+  `--no-skip-default-records` 指定時のみ resume 可能。デフォルト動作で resume すると
+  fingerprint 不一致で停止する（安全側）。エラーメッセージに従い `progress.json` を削除して再実行すること。
 
 ---
 

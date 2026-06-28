@@ -71,18 +71,75 @@ def contains_japanese(text: str) -> bool:
     return _JAPANESE_RE.search(text) is not None
 
 
-def is_translation_needed(source: str) -> bool:
-    """翻訳が必要か（Plan §5.7.1 v0.3）。
+DEFAULT_SKIP_RECORDS: frozenset[str] = frozenset({
+    "HDPT:FULL",  # Head Part name
+    "FURN:FULL",  # Furniture name
+    "CLAS:FULL",  # Class name
+    "DOOR:FULL",  # Door name
+    "FACT:FULL",  # Faction name
+    "CLFM:FULL",  # Color Form name
+    "TREE:FULL",  # Tree name
+    "MGEF:FULL",  # Magic Effect name
+    "RACE:FULL",  # Race name
+    "EXPL:FULL",  # Explosion name
+    "HAZD:FULL",  # Hazard name
+    "BPTD:BPTN",  # Body Part Data name
+})
 
-    * 空 または 空白のみ → ``False``（スキップ）
-    * ひらがな・カタカナ・漢字を含む → ``False``（スキップ）
-    * それ以外（ASCIIのみ、non-ASCII 英語含む）→ ``True``
+
+def is_translation_needed(
+    source: str,
+    rec: str = "",
+    skip_records: frozenset[str] | None = None,
+) -> bool:
+    """翻訳が必要か（Plan §5.7.1 v0.3 + v0.2 REC 型スキップ拡張）。
+
+    Args:
+        source: ``<Source>`` の生文字列。
+        rec: ``<REC>`` の値（例: ``"HDPT:FULL"``）。空文字列も可（後方互換性）。
+        skip_records: スキップ対象 REC 型のセット。``None`` の場合は
+            :data:`DEFAULT_SKIP_RECORDS` を使用。
+
+    Returns:
+        ``True`` = 翻訳対象, ``False`` = スキップ。
+
+    判定順序:
+
+    1. ``rec`` が ``skip_records`` に含まれる → ``False``（REC 型スキップ）
+    2. 空 または 空白のみ → ``False``
+    3. ひらがな・カタカナ・漢字を含む → ``False``
+    4. それ以外（ASCIIのみ、non-ASCII 英語含む）→ ``True``
+
+    後方互換性: ``rec=""`` の場合は REC 型スキップが適用されず、
+    v0.1 の ``is_translation_needed(source)`` と同じ挙動。
     """
+    if skip_records is None:
+        skip_records = DEFAULT_SKIP_RECORDS
+    if rec and rec in skip_records:
+        return False
     if source is None or not source or not source.strip():
         return False
     if contains_japanese(source):
         return False
     return True
+
+
+def _parse_skip_records(text: str) -> frozenset[str]:
+    """``--skip-records`` のカンマ区切りテキストを :class:`frozenset` に変換。
+
+    仕様（Plan §5.2b）:
+
+    * カンマで分割
+    * 各要素は strip（前後空白を許容）
+    * 空文字列要素は無視（``"A,,B"`` → ``{A, B}``）
+    * 重複は自動で排除（frozenset の性質）
+    * 大文字小文字は区別しない（``hdpt:full`` → ``HDPT:FULL`` に正規化）
+        ※ REC 型は Skyrim 側で大文字で定義されているため
+    """
+    if not text.strip():
+        return frozenset()
+    parts = [p.strip().upper() for p in text.split(",")]
+    return frozenset(p for p in parts if p)
 
 
 # ---------------------------------------------------------------------------
@@ -254,8 +311,11 @@ class Translator:
         Raises:
             IroiroError: トークン不一致、またはリトライ最終失敗。
         """
-        # 呼出側でのスキップを前提とするが、念のため空/日本語混入はそのまま返す
-        if not is_translation_needed(source):
+        # 呼出側でのスキップを前提とするが、念のため空/空白はそのまま返す
+        # ※ REC 型スキップ・日本語スキップは CLI 側で判定する（Plan §5.2・申送り#7）。
+        #    Translator は is_translation_needed を呼ばない（MGEF:FULL 等の REC skip が
+        #    translator 内で発動すると単体テストが破綻するため）。
+        if source is None or not source.strip():
             return source
 
         async with self._sem:

@@ -1,0 +1,59 @@
+﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<SSTXMLRessources>
+  <Params>
+    <Addon>SkipTestMod.esp</Addon>
+    <Source>english</Source>
+    <Dest>japanese</Dest>
+    <Version>2</Version>
+  </Params>
+  <Content>
+    <String List="0">
+      <EDID>HeadPartEntry</EDID>
+      <REC>HDPT:FULL</REC>
+      <Source>Male Head</Source>
+      <Dest>Male Head</Dest>
+    </String>
+    <String List="0">
+      <EDID>WeaponEntry</EDID>
+      <REC>WEAP:FULL</REC>
+      <Source>Iron Sword</Source>
+      <Dest>Iron Sword</Dest>
+    </String>
+    <String List="0">
+      <EDID>MagicEffectEntry</EDID>
+      <REC>MGEF:FULL</REC>
+      <Source>Fire Damage</Source>
+      <Dest>Fire Damage</Dest>
+    </String>
+    <String List="0">
+      <EDID>RaceEntry</EDID>
+      <REC>RACE:FULL</REC>
+      <Source>Nord</Source>
+      <Dest>Nord</Dest>
+    </String>
+    <String List="0">
+      <EDID>BodyPartEntry</EDID>
+      <REC>BPTD:BPTN</REC>
+      <Source>Head</Source>
+      <Dest>Head</Dest>
+    </String>
+    <String List="0">
+      <EDID>ActivatorEntry</EDID>
+      <REC>ACTI:FULL</REC>
+      <Source>Wooden Door</Source>
+      <Dest>Wooden Door</Dest>
+    </String>
+    <String List="0">
+      <EDID>EmptyEntry</EDID>
+      <REC>ACTI:FULL</REC>
+      <Source></Source>
+      <Dest></Dest>
+    </String>
+    <String List="0">
+      <EDID>JapaneseEntry</EDID>
+      <REC>WEAP:FULL</REC>
+      <Source>既存の日本語</Source>
+      <Dest>既存の日本語</Dest>
+    </String>
+  </Content>
+</SSTXMLRessources>

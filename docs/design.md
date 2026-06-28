@@ -168,15 +168,99 @@ iroiro は翻訳対象の MOD XML を破壊しない設計。翻訳失敗・ス�
   クラッシュ時に本ファイルが破損しない（残存 `tmp` は次回実行時に上書きされる）。
 - **`input_hash` 検証**: 入力 XML を変更した後に `--resume` すると SHA256 が合わずに停止する。
   安全側の挙動。メッセージに従い進捗ファイルを削除して再実行する。
+- **`skip_records_fingerprint` 検証**（v0.2）: `--no-skip-default-records` / `--skip-records` を
+  変更した後に `--resume` すると fingerprint が合わずに停止する。`input_hash` と同じパターン。
 - **JSON decode error**: 自動修復せず停止。ユーザーにファイル削除を促す。
+
+---
+
+## 翻訳スキップ REC 型（v0.2）
+
+Skyrim MOD の XML で `<REC>` が **内部管理用** レコード型の `<String>` を翻訳すると、
+MOD が誤動作する（内部IDとして使われている名前が変わってしまう等）。これを防ぐため、
+デフォルトで12件の REC 型を翻訳スキップする。
+
+### デフォルトスキップリスト
+
+```
+HDPT:FULL  FURN:FULL  CLAS:FULL  DOOR:FULL  FACT:FULL  CLFM:FULL
+TREE:FULL  MGEF:FULL  RACE:FULL  EXPL:FULL  HAZD:FULL  BPTD:BPTN
+```
+
+これらは `iroiro/translator.py` の `DEFAULT_SKIP_RECORDS`（`frozenset[str]`）として組み込みで持つ。
+根拠はユーザーによる実機検証で「これらの REC 型は内部管理用に使われるため翻訳非推奨」と判明したため
+（詳細は `docs/notes/translate-skip-records.md` 参照）。
+
+### `MGEF:FULL` / `RACE:FULL` の取り扱い注意
+
+魔法効果名（`MGEF:FULL`）と種族名（`RACE:FULL`）は、翻訳を **希望する** ユーザーも多い。
+デフォルトではスキップするが、以下の方法で個別制御可能:
+
+- **`--no-skip-default-records` 単独**: 全 REC 型を翻訳対象にする（v0.1 互換動作）
+- **`--no-skip-default-records --skip-records "HDPT:FULL,..."`**: デフォルト12件のうち
+  翻訳したくない REC 型のみを再指定（`MGEF:FULL` / `RACE:FULL` 以外の10件を再指定すれば、
+  これら2件のみ翻訳される）
+
+### `is_translation_needed` の拡張設計
+
+v0.1 は `is_translation_needed(source) -> bool` で source 文字列のみ判定していた（空/空白/日本語混入）。
+v0.2 は signature を拡張し:
+
+```python
+def is_translation_needed(
+    source: str,
+    rec: str = "",
+    skip_records: frozenset[str] | None = None,
+) -> bool
+```
+
+判定順序:
+
+1. `rec` が `skip_records` に含まれる → `False`（REC 型スキップ）
+2. 空/空白 → `False`
+3. 日本語混入 → `False`
+4. それ以外 → `True`
+
+`skip_records=None` の場合は `DEFAULT_SKIP_RECORDS` を使用。`rec=""` の場合は REC 型スキップが
+適用されず、v0.1 の `is_translation_needed(source)` と同じ挙動（後方互換性）。
+
+**重要**: `Translator.translate_entry` は **`is_translation_needed` を呼ばない**（v0.2 設計判断）。
+REC 型スキップ・言語スキップ・長文スキップは **CLI 側でのみ** 判定し、結果を `StringEntry.state` /
+`skip_reason` に記録する。これにより `Translator` 単体テスト（`MGEF:FULL` 等の rec を直接渡す
+テスト）が REC スキップ設定に影響されずに動作する。
+
+### dry-run 集計の排他性
+
+REC skip と言語 skip が **重複カウントされない** よう、dry-run 集計は以下の順序で行う:
+
+1. まず `pending` から `rec in skip_records` で REC skip を抽出
+2. 残り（`non_rec_pending`）で言語判定（`is_translation_needed`）・長文判定を行う
+
+これにより「REC skip + 言語 skip = 総エントリ数」が常に成り立つ。
+
+### `progress.json` の `skip_records_fingerprint` 検証
+
+スキップリストは入力 XML と独立に変更可能なので、`progress.json` に fingerprint を保存し、
+`--resume` 時に検証する（`input_hash` と同じパターン）:
+
+- fingerprint は `compute_skip_records_fingerprint(skip_records)` で計算
+- **空集合は `""` を返す特例**（v0.1 形式 `progress.json` との互換性のため）
+- 非空は `SHA256("\n".join(sorted(skip_records)))` の hex
+- 不一致時は `ValueError` で停止し、ユーザーに `progress.json` の削除を促す
+
+v0.1 で作成された `progress.json`（fingerprint フィールド無し = `""`）は:
+- `--no-skip-default-records` 指定時（空 set = `""`）→ resume 成功
+- デフォルト動作（`DEFAULT_SKIP_RECORDS` = 非`""`）→ fingerprint 不一致で停止（安全側）
 
 ---
 
 ## 制限事項
 
-- **用語集**: v0.2 以降で対応予定（PR 歓迎）
+- **用語集**: 未対応（PR 歓迎）
 - **対訳方向**: 英→日のみ。他の方向は未対応
 - **対応形式**: `SSTXMLRessources` v2 のみ。v3 / `Interface/*.txt` 等の他形式は将来対応
 - **長文の自動分割**: 未対応。`--max-chars` 超過時はスキップ
 - **CDATA / XML コメント**: 入力に含まれる場合はエラー停止（v0.1 では非サポート）
 - **alias 名の文字種**: `[A-Za-z0-9_\-]` のみ。ドット `.` / コロン `:` は非サポート
+- **スキップリストのファイル読み込み**: `--skip-records-file PATH` 等は未対応。
+  需要が出たら追加（v0.2 は `--skip-records TEXT` のカンマ区切りのみ）

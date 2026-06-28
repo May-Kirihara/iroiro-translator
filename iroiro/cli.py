@@ -8,7 +8,8 @@ Plan §5.4 / §6.7 で規定される ``translate`` サブコマンドを実装�
     3. ``--dry-run`` 時は件数表示のみで終了。
     4. 各 entry を処理:
        * state != ``pending`` なら skip。
-       * ``is_translation_needed(source)`` が False → ``skipped``。
+       * ``rec in skip_records`` → ``skipped``（REC 型スキップ・v0.2）。
+       * ``is_translation_needed(source, rec, skip_records)`` が False → ``skipped``。
        * ``len(source) > max_chars`` → ``skipped``。
        * ``Translator.translate_entry`` で翻訳。``IroiroError`` は catch して ``failed``。
     5. ``serialize_xml`` で出力XMLを生成。
@@ -28,8 +29,19 @@ from iroiro import logging as iroiro_logging
 from iroiro.config import RunConfig
 from iroiro.errors import IroiroError
 from iroiro.models import StringEntry
-from iroiro.progress import ProgressData, ProgressWriter, compute_input_hash
-from iroiro.translator import ApiConfig, Translator, is_translation_needed
+from iroiro.progress import (
+    ProgressData,
+    ProgressWriter,
+    compute_input_hash,
+    compute_skip_records_fingerprint,
+)
+from iroiro.translator import (
+    DEFAULT_SKIP_RECORDS,
+    ApiConfig,
+    Translator,
+    _parse_skip_records,
+    is_translation_needed,
+)
 from iroiro.xml_io import parse_xml, serialize_xml
 
 # モジュールレベルで ``app`` を定義（テストが ``from iroiro.cli import app`` するため）。
@@ -98,6 +110,16 @@ def translate(
         False, "--dry-run", help="LLM を呼ばず処理件数のみ表示"
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="詳細ログ"),
+    no_skip_default_records: bool = typer.Option(
+        False,
+        "--no-skip-default-records",
+        help="デフォルトの12件スキップを無効化（全 REC 型を翻訳対象にする）",
+    ),
+    skip_records_text: str = typer.Option(
+        "",
+        "--skip-records",
+        help='追加スキップ REC 型（カンマ区切り・例: "LCTN:FULL,ACTI:FULL"）',
+    ),
 ) -> None:
     """入力XMLの ``<Source>`` を翻訳し、``<Dest>`` に書き戻したXMLを出力する。"""
     iroiro_logging.configure_logging(verbose)
@@ -115,6 +137,15 @@ def translate(
         concurrency=concurrency,
         max_chars=max_chars,
     )
+    # skip_records 構築（Plan §5.2）:
+    # - デフォルト: DEFAULT_SKIP_RECORDS（12件）+ --skip-records の追加要素
+    # - --no-skip-default-records 単独: --skip-records のみ（空なら空 set = 全 REC 型翻訳）
+    # - --no-skip-default-records + --skip-records: 後者のセットのみ適用
+    if no_skip_default_records:
+        skip_records = _parse_skip_records(skip_records_text)
+    else:
+        skip_records = DEFAULT_SKIP_RECORDS | _parse_skip_records(skip_records_text)
+
     cfg = RunConfig(
         input_path=input,
         output_path=output_path,
@@ -122,6 +153,7 @@ def translate(
         resume=resume,
         dry_run=dry_run,
         verbose=verbose,
+        skip_records=skip_records,
     )
 
     asyncio.run(_run(cfg))
@@ -155,12 +187,14 @@ async def _run(cfg: RunConfig) -> None:
     # ---- 2. resume ----
     progress_path = _progress_path(cfg.input_path)
     input_hash = compute_input_hash(cfg.input_path)
+    skip_records_fp = compute_skip_records_fingerprint(cfg.skip_records)
     writer = ProgressWriter(
         progress_path=progress_path,
         input_path=cfg.input_path,
         input_hash=input_hash,
         api_base=cfg.api.base_url,
         model=cfg.api.model,
+        skip_records_fingerprint=skip_records_fp,
     )
 
     existing: ProgressData | None = None
@@ -181,23 +215,34 @@ async def _run(cfg: RunConfig) -> None:
             iroiro_logging.info("Resume requested but no existing progress.json found")
 
     # ---- 3. 件数集計（dry-run 表示用） ----
+    # Plan §5.3 + T69: REC skip と言語 skip が重複カウントされないよう、
+    # まず REC skip を抽出し、残り（non_rec_pending）で言語/長文判定を行う。
     total = len(entries)
     pending = [e for e in entries if e.state == "pending"]
+    skipped_rec = [e for e in pending if e.rec in cfg.skip_records]
+    non_rec_pending = [e for e in pending if e.rec not in cfg.skip_records]
     translatable = [
         e
-        for e in pending
-        if is_translation_needed(e.source) and len(e.source) <= cfg.api.max_chars
+        for e in non_rec_pending
+        if is_translation_needed(e.source, e.rec, cfg.skip_records)
+        and len(e.source) <= cfg.api.max_chars
     ]
-    skipped_lang = [e for e in pending if not is_translation_needed(e.source)]
+    skipped_lang = [
+        e
+        for e in non_rec_pending
+        if not is_translation_needed(e.source, e.rec, cfg.skip_records)
+    ]
     skipped_long = [
         e
-        for e in pending
-        if is_translation_needed(e.source) and len(e.source) > cfg.api.max_chars
+        for e in non_rec_pending
+        if is_translation_needed(e.source, e.rec, cfg.skip_records)
+        and len(e.source) > cfg.api.max_chars
     ]
     already_done = sum(1 for e in entries if e.state == "translated")
 
     console.print(f"[bold]総エントリ数:[/bold] {total}")
     console.print(f"[green]翻訳対象:[/green] {len(translatable)}")
+    console.print(f"[yellow]スキップ（REC 型）:[/yellow] {len(skipped_rec)}")
     console.print(f"[yellow]スキップ（空/日本語混入）:[/yellow] {len(skipped_lang)}")
     console.print(f"[yellow]スキップ（長文超過）:[/yellow] {len(skipped_long)}")
     if already_done:
@@ -261,11 +306,20 @@ async def _translate_all(
     async def process(entry: StringEntry) -> None:
         if entry.state != "pending":
             return
-        # スキップ判定（言語/長文）
-        if not is_translation_needed(entry.source):
+        # REC 型スキップ（Plan §5.2 / §5.6.3）: skip_records に含まれる REC は
+        # original_dest を保持して skipped にする（source で上書きしない）。
+        if entry.rec in cfg.skip_records:
             entry.new_dest = entry.original_dest
             entry.state = "skipped"
+            entry.skip_reason = "rec"
             return
+        # 言語スキップ（空/空白/日本語混入）
+        if not is_translation_needed(entry.source, entry.rec, cfg.skip_records):
+            entry.new_dest = entry.original_dest
+            entry.state = "skipped"
+            entry.skip_reason = "language"
+            return
+        # 長文スキップ
         if len(entry.source) > cfg.api.max_chars:
             iroiro_logging.warn(
                 "skipping long source (index=%d, len=%d > max_chars=%d)",
@@ -275,6 +329,7 @@ async def _translate_all(
             )
             entry.new_dest = entry.original_dest
             entry.state = "skipped"
+            entry.skip_reason = "max_chars"
             return
 
         async with sem:

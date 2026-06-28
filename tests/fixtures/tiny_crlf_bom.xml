@@ -9,7 +9,7 @@
   <Content>
     <String List="0">
       <EDID>TestEntryAlias</EDID>
-      <REC>MGEF:FULL</REC>
+      <REC>INFO:RNAM</REC>
       <Source>Hello &lt;alias=hero&gt;, welcome to %{location}!</Source>
       <Dest>Hello &lt;alias=hero&gt;, welcome to %{location}!</Dest>
     </String>

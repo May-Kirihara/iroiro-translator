@@ -83,6 +83,31 @@ def with_comment_xml() -> Path:
     return FIXTURES_DIR / "with_comment.xml"
 
 
+@pytest.fixture(scope="session")
+def skip_records_xml() -> Path:
+    """skip_records.xml: 複数 REC 型を含む小XML（v0.2 T56-T83 用）。
+
+    構成（8エントリ）:
+      - HDPT:FULL "Male Head"          → デフォルトスキップリスト（REC skip）
+      - WEAP:FULL "Iron Sword"         → デフォルトスキップリスト外（翻訳対象）
+      - MGEF:FULL "Fire Damage"        → デフォルトスキップリスト（REC skip）
+      - RACE:FULL "Nord"               → デフォルトスキップリスト（REC skip）
+      - BPTD:BPTN "Head"               → デフォルトスキップリスト（REC skip・```:FULL``` 以外）
+      - ACTI:FULL "Wooden Door"        → デフォルトスキップリスト外（翻訳対象）
+      - ACTI:FULL ""                   → 空文字（言語 skip）
+      - WEAP:FULL "既存の日本語"       → 日本語（言語 skip）
+
+    dry-run 集計の期待値（デフォルト動作）:
+      - 翻訳対象: 2 (WEAP:FULL Iron Sword, ACTI:FULL Wooden Door)
+      - スキップ（空/日本語混入）: 2 (ACTI:FULL 空, WEAP:FULL 日本語)
+      - スキップ（REC 型）: 4 (HDPT, MGEF, RACE, BPTD)
+      - スキップ（長文超過）: 0
+
+    形式: BOM + CRLF + standalone="yes"（実データと同じ）。
+    """
+    return FIXTURES_DIR / "skip_records.xml"
+
+
 # ----- テスト高速化 -------------------------------------------------------------
 
 @pytest.fixture(autouse=True)

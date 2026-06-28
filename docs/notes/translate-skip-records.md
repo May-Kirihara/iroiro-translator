@@ -1,7 +1,10 @@
 # 翻訳スキップ対象レコード型（v0.2 機能の種）
 
 - 作成: 2026-06-28
-- ステータス: idea（v0.2 で実装検討）
+- ステータス: ✅ implemented（v0.2 で実装済み）
+
+> ✅ **v0.2 で実装済み**（`DEFAULT_SKIP_RECORDS` + `--no-skip-default-records` / `--skip-records` CLI フラグ）。
+> 詳細は [docs/usage.md](../usage.md) と [docs/design.md](../design.md) を参照。
 
 ## 背景
 

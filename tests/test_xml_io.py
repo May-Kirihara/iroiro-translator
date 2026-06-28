@@ -1,5 +1,7 @@
 """test_xml_io.py — XML I/O のテスト（T1-T10, T47-T49, T52-T53）。
 
+v0.2 追加: T68（skip されたエントリの ``<Dest>`` が original_dest を保持）。
+
 対象モジュール: `iroiro/xml_io.py`、`iroiro/models.py`、`iroiro/errors.py`
 シグネチャ契約（Plan §6.2）:
     parse_xml(path: Path) -> tuple[list[StringEntry], FileFormat, etree._Element, dict[str, str]]
@@ -11,6 +13,7 @@
   - 二重エスケープ防止（lxml 任せ）
   - 空要素 `<X></X>` 形式の保持（自己閉じ化しない）
   - CDATA / XMLコメント 入力時の IroiroError 停止
+  - v0.2: skip されたエントリの ``<Dest>`` が ``original_dest`` を保持
 """
 from __future__ import annotations
 
@@ -650,3 +653,114 @@ def test_T55_external_entity_not_loaded(tmp_path: Path) -> None:
         f"&e; は _Entity ノードとして残る（読み込まれない）: "
         f"children={[type(c).__name__ for c in src_elem]}"
     )
+
+
+# ===========================================================================
+# v0.2: T68 — skip されたエントリの <Dest> が original_dest を保持
+#
+# Plan §5.6.3 / §5.9 / §6.3: state="skipped" のエントリは source で上書きせず、
+# original_dest を保持する。xml_io.serialize_xml は
+# ``entry.new_dest if entry.new_dest is not None else entry.original_dest``
+# の単一セマンティクスでこれを実現する。
+#
+# 本テストは REC skip / 言語 skip にかかわらず、state="skipped" で
+# new_dest=None のエントリの <Dest> が original_dest になることを検証する。
+# ===========================================================================
+
+
+def test_T68_skipped_entry_preserves_original_dest(
+    skip_records_xml: Path,
+    tmp_path: Path,
+) -> None:
+    """T68: state="skipped", new_dest=None のエントリの <Dest> が original_dest を保持。
+
+    REC skip（HDPT:FULL）・言語 skip（日本語 Source）の両ケースで、
+    new_dest をセットせずに serialize すると <Dest>.text は original_dest になる。
+    これにより「過去に人間が修正した <Dest> を破壊しない」ポリシーが保証される。
+    """
+
+    entries, fmt, root, _ = parse_xml(skip_records_xml)
+
+    # HDPT:FULL "Male Head"（REC skip 相当）と
+    # WEAP:FULL "既存の日本語"（言語 skip 相当）を state="skipped" にする
+    hdpt_entry = entries[0]
+    assert hdpt_entry.rec == "HDPT:FULL"
+    assert hdpt_entry.original_dest == "Male Head"
+    hdpt_entry.state = "skipped"
+    hdpt_entry.new_dest = None  # new_dest をセットしない
+
+    jp_entry = entries[7]
+    assert jp_entry.rec == "WEAP:FULL"
+    assert "既存の日本語" in jp_entry.source
+    assert jp_entry.original_dest == "既存の日本語"
+    jp_entry.state = "skipped"
+    jp_entry.new_dest = None
+
+    out = serialize_xml(entries, root, fmt)
+
+    # 出力を tmp_path に書き出して再 parse し <Dest> を確認。
+    # tmp_path は pytest が自動削除するため try/finally unlink 不要。
+    tmp_out = tmp_path / "t68_out.xml"
+    tmp_out.write_bytes(out)
+    out_entries, _, _, _ = parse_xml(tmp_out)
+
+    out_hdpt = out_entries[0]
+    out_jp = out_entries[7]
+
+    # REC skip 相当: <Dest> は original_dest "Male Head" を保持
+    assert out_hdpt.original_dest == "Male Head", (
+        f"HDPT skip の <Dest> は original_dest を保持: "
+        f"実際 {out_hdpt.original_dest!r}"
+    )
+
+    # 言語 skip 相当: <Dest> は original_dest "既存の日本語" を保持
+    assert out_jp.original_dest == "既存の日本語", (
+        f"日本語 skip の <Dest> は original_dest を保持: "
+        f"実際 {out_jp.original_dest!r}"
+    )
+
+    # raw bytes でも確認（source で上書きされていないことの証明）
+    assert b"<Dest>Male Head</Dest>" in out
+    # XML ヘッダが BOM + CRLF 形式を保持していることも回帰確認
+    assert out.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" in out
+
+
+def test_T68b_skipped_entry_with_original_dest_differs_from_source(
+    skip_records_xml: Path,
+    tmp_path: Path,
+) -> None:
+    """T68 補足: source != original_dest のケースで original_dest を保持。
+
+    Plan §5.6.3 / §5.9 の中核ポリシー: 過去に人間が修正した <Dest> を破壊しない。
+    source と original_dest が異なるエントリを state="skipped" で serialize した場合、
+    <Dest>.text は original_dest になる（source で上書きしない）。
+    """
+    entries, fmt, root, _ = parse_xml(skip_records_xml)
+
+    # HDPT:FULL エントリの original_dest を人間が修正した値に変更
+    hdpt_entry = entries[0]
+    assert hdpt_entry.rec == "HDPT:FULL"
+    assert hdpt_entry.source == "Male Head"
+    hdpt_entry.original_dest = "過去に人間が修正した男性頭部"
+    hdpt_entry.state = "skipped"
+    hdpt_entry.new_dest = None  # new_dest をセットしない
+
+    out = serialize_xml(entries, root, fmt)
+
+    # 出力の raw bytes に original_dest が含まれる（source で上書きされていない）
+    assert "過去に人間が修正した男性頭部".encode() in out, (
+        "original_dest（過去の修正）が保持される"
+    )
+
+    # raw bytes を tmp に書いて parse で再確認
+    tmp_out = tmp_path / "t68b_out.xml"
+    tmp_out.write_bytes(out)
+    out_entries, _, _, _ = parse_xml(tmp_out)
+
+    out_hdpt = out_entries[0]
+    assert out_hdpt.original_dest == "過去に人間が修正した男性頭部", (
+        "source で上書きされず original_dest を保持"
+    )
+    # source は不変（parse し直しても元の英文）
+    assert out_hdpt.source == "Male Head"

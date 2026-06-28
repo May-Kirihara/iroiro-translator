@@ -24,6 +24,8 @@ class StringEntry:
         original_dest: ``<Dest>`` の元の生文字列。失敗/スキップ時に保持される。
         new_dest: 新しい訳文。未処理またはスキップ時は ``None``。
         state: 処理状態。
+        skip_reason: スキップ理由（v0.2 追加・``state="skipped"`` の場合のみ設定）。
+            ``"rec"`` / ``"language"`` / ``"max_chars"`` のいずれか。それ以外は ``None``。
     """
 
     index: int
@@ -33,6 +35,7 @@ class StringEntry:
     original_dest: str
     new_dest: str | None
     state: Literal["pending", "translated", "skipped", "failed"]
+    skip_reason: str | None = None
 
 
 @dataclass(slots=True)
