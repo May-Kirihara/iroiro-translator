@@ -24,6 +24,7 @@ iroiro translate INPUT.xml [OPTIONS]
 | `--max-chars` | INTEGER | `4000` | 1エントリの最大文字数。超過時はスキップ（v0.1 では分割しない） |
 | `--timeout` | FLOAT | `120.0` | 1リクエストの読み出しタイムアウト（秒） |
 | `--resume` | FLAG | `False` | `progress.json` があれば再開 |
+| `--retry-failed` / `--no-retry-failed` | FLAG | `False` | resume 時に `failed` エントリを再翻訳対象に戻す（未指定時は `iroiro.toml` → 内蔵デフォルト）（v0.4） |
 | `--dry-run` | FLAG | `False` | LLM を呼ばず処理件数のみ表示 |
 | `--no-skip-default-records` | FLAG | `False` | デフォルトの12件スキップを無効化（全 REC 型を翻訳対象にする）（v0.2） |
 | `--skip-records` | TEXT | `""` | 追加スキップ REC 型（カンマ区切り・例: `"LCTN:FULL,ACTI:FULL"`）（v0.2） |
@@ -34,8 +35,9 @@ iroiro translate INPUT.xml [OPTIONS]
 > `--api-key` は llama.cpp の OpenAI 互換サーバーでは検証されないが、HTTP ヘッダとしては送信されるため
 > 任意の非空文字列を指定する（既定の `iroiro` はダミー）。
 
-> **解決順序（v0.3）**: `--api-base` / `--api-key` / `--model` / `--concurrency` /
-> `--max-chars` / `--timeout` の6フラグは、**CLI フラグ（明示指定時）＞ `iroiro.toml` ＞ 内蔵デフォルト**
+> **解決順序（v0.3 / v0.4）**: `--api-base` / `--api-key` / `--model` / `--concurrency` /
+> `--max-chars` / `--timeout` の6フラグ（v0.3）と `--retry-failed` / `--no-retry-failed`（v0.4）は、
+> **CLI フラグ（明示指定時）＞ `iroiro.toml` ＞ 内蔵デフォルト**
 > （上表の値）の順で解決されます。各フラグを省略したとき `iroiro.toml` の値が使われます。
 > 詳細は下記の「設定ファイル（v0.3）」節を参照。
 
@@ -63,6 +65,7 @@ model       = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
 timeout     = 120.0
 concurrency = 1
 max_chars   = 4000
+retry_failed = false   # v0.4 追加・省略時は false 扱い（後方互換）
 ```
 
 ### 優先順位
@@ -112,6 +115,7 @@ cp iroiro.toml.example iroiro.toml
 | `timeout` | 数値 | `> 0` | 1リクエストの読み出しタイムアウト（秒）。整数（`120`）も可・内部的に浮動小数点に正規化 |
 | `concurrency` | 整数 | `>= 1` | 同時リクエスト数 |
 | `max_chars` | 整数 | `>= 0` | 1エントリの最大文字数。超過時はスキップ。**`0` は正当値（= 全件スキップ）** なので注意 |
+| `retry_failed` | 真偽値 | `true` / `false` | resume 時に `failed` エントリを再翻訳対象に戻すか。デフォルト `false`（後方互換・v0.4 追加）。詳細は下記「[failed の再試行（v0.4）](#failed-の再試行v04)」節を参照 |
 
 > **`max_chars = 0` に注意**: `0` は「全エントリをスキップ」の意味になります（`len(source) > 0` が
 > 常に真のため）。意図せず全件スキップにならないよう、基本的には `1` 以上を指定してください。
@@ -216,10 +220,71 @@ uv run iroiro translate path/to/your_mod.xml --resume
 `--resume` 時の挙動:
 
 - 既存 `entries` の index はスキップ（`state=translated`、訳文を再利用）
-- 既存 `failed` の index は再試行せず保持（`state=failed`、元の `<Dest>` を保持）
+- 既存 `failed` の index は再試行せず保持（`state=failed`、元の `<Dest>` を保持）※ デフォルト動作・後述の `--retry-failed` で変更可能
 - `input_hash`（SHA256）が不一致 → 停止（入力 XML を変更した場合）
 - `skip_records_fingerprint` が不一致 → 停止（`--no-skip-default-records` / `--skip-records` を変更した場合）（v0.2）
 - JSON decode error → 停止（ユーザーにファイル削除を促す）
+
+### failed の再試行（v0.4）
+
+デフォルトでは `--resume` 時に `failed` エントリはそのまま保持され、再翻訳されません（v0.3 までと同じ挙動・後方互換）。
+LLM の一時的エラー（ネットワーク・`--ctx-size` 不足・モデルの揺らぎ等）で `failed` になったエントリを
+再翻訳対象に戻すには `--retry-failed` を使います。
+
+#### 使い方
+
+```bash
+# 1回限りの再試行
+iroiro translate INPUT.xml --resume --retry-failed
+
+# 常に再試行（iroiro.toml に retry_failed = true と書く）
+iroiro translate INPUT.xml --resume
+
+# 今回だけ再試行しない（toml が true でも）
+iroiro translate INPUT.xml --resume --no-retry-failed
+```
+
+#### 優先順位
+
+CLI フラグ（`--retry-failed` / `--no-retry-failed`）＞ `iroiro.toml` ＞ 内蔵デフォルト `False`
+
+`iroiro.toml` に `retry_failed = true` と書いておけば、毎回 `--retry-failed` を打つ必要がありません。
+CLI フラグは `iroiro.toml` より常に優先されるので、`--no-retry-failed` で一時的に無効化することも可能です。
+
+#### `--retry-failed` 単独（`--resume` 無し）の挙動
+
+`retry_failed` が有効な状態（CLI の `--retry-failed` または `iroiro.toml` の `retry_failed = true`）
+で `--resume` を付けずに実行すると、警告ログが出て **通常実行** になります（exit 2 にはなりません）。
+`--resume` 無しでは `progress.json` が読み込まれないため、`failed` を `pending` に戻す対象もありません。
+ユーザーが `--resume` 忘れに気づけるよう WARNING レベルで出力します。
+
+```bash
+# CLI フラグで指定した場合も toml で retry_failed = true の場合も、同じ WARNING が出ます
+$ iroiro translate INPUT.xml --retry-failed
+WARNING  --retry-failed が指定されましたが --resume が無いため、failed エントリの再試行は行われません（通常実行になります）
+```
+
+#### 不変性（entries ∩ failed = ∅）
+
+retry で成功した index は `progress.json` の `failed` リストから削除され、`entries` に移動します。
+**同じ index が両方に存在することはありません**。これにより「Resuming: X translated, Y failed」
+メッセージと `progress.json` の内容が常に整合します。
+
+失敗した index は `failed` に append されますが、重複チェックがあるため **同じ index が複数回
+append されることはありません**（retry ループで「再試行 → 再失敗」を繰り返しても 1回だけ）。
+
+#### 使用シナリオ
+
+- **LLM サーバーの一時的エラー・ネットワークエラー** で `failed` になった場合 → 環境を変えずに再試行で通る可能性あり
+- **llama.cpp の `--ctx-size` 等の LLM 側設定を変えた後** の再実行 → コンテキスト長不足で空応答だったエントリが通る可能性あり
+- **※ 決定論的エラー**（token mismatch 等）の場合も再試行されますが、**同じ結果になる可能性が高い** 点に注意。
+  無駄な LLM 呼出を避けるため、`failed` の原因が決定論的であれば再試行しないのが無難です
+
+#### 出力 XML の `<Dest>` 扱い
+
+retry で `pending` に戻ったエントリは **翻訳が終わるまで元の `<Dest>`（`original_dest`）を保持** します
+（失敗時の `<Dest>` 保護ポリシーと同じ・詳細は [設計判断](design.md) 参照）。翻訳が成功すれば新しい訳文が
+`<Dest>` に入り、再失敗時は元の `<Dest>` が保持されます。`<Source>` で `<Dest>` を上書きすることはありません。
 
 ---
 

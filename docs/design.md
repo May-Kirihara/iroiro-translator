@@ -328,6 +328,75 @@ Python では `bool` は `int` の部分型（`isinstance(True, int) == True`）
 
 ---
 
+## retry_failed 設計判断（v0.4）
+
+v0.4 で `--resume` 時の `failed` エントリ再試行機能を追加した。設計判断と却下代替案の経緯は
+[実装計画 004 §4 / §14](plans/004-retry-failed.md) を参照。
+
+### なぜデフォルト `False` か
+
+後方互換と「決定論的エラー」と「一時的エラー」の区別のため:
+
+- **決定論的エラー**（token mismatch・空応答・メタ返答等）: 同じ入力・同じモデルなら再試行しても同じ結果
+- **一時的エラー**（ネットワーク・LLM の揮らぎ・`--ctx-size` 不足等）: 環境を変えれば通る可能性
+
+`retry_failed = true` を明示しない限り再試行しないことで、決定論的エラーを無駄に再試行するコストを
+回避する（v0.1 からの「`failed` は確定扱い」方針をデフォルトで維持）。ユーザーが一時的エラーと判断した
+時だけ opt-in する設計（計画書 §2 / §11.1）。
+
+### なぜ全 failed を一括か
+
+選択的リトライ（`--retry-failed 1,5,10` 等）はスコープ外とした。全 `failed` 一括で十分実用的で、
+特定 index だけ再試行したい場合は `progress.json` を手動編集すれば代替可能。
+将来必要になれば `--retry-failed-only INDEX` 等で拡張できる（計画書 §5.2 / §14）。
+
+### なぜ `mark_done()` で failed をクリアするか
+
+**不変性「`entries ∩ failed = ∅`」を保証するため**。retry で成功した index が `failed` に残っていると、
+`progress.json` の内容と起動時の「Resuming: X translated, Y failed」メッセージが整合しなくなる。
+成功時（`mark_done`）に同 index が `failed` にあれば削除することで、常に一貫した状態を保つ
+（計画書 §4.6）。これは v0.1 では潜在バグだったが、retry 機能の導入で顕在化するため明示的に保証する。
+
+### なぜ `mark_failed()` に重複チェックを入れたか
+
+retry ループ（再試行 → 再失敗 → 再試行…）で **同じ index が複数回 append されるのを防ぐため**。
+重複チェックを入れないと、`progress.json` の `failed` リストが同じ index で膨張し、JSON 尺度・
+可読性・「Resuming」メッセージの集計正確性に悪影響が出る（計画書 §4.6 / §11.3）。
+
+> `if index not in failed` の線形探索は O(N) だが、`failed` リストは通常数十件程度なので実用上問題なし。
+> 数千件になったら `set` への持ち替えを検討する（将来課題・計画書 §11.5）。
+
+### なぜ `RunConfig`（`ApiConfig` でなく）に置いたか
+
+`retry_failed` は LLM 呼出パラメータ（`base_url` / `api_key` / `model` / `timeout` 等）でなく、
+**実行制御フラグ**（`resume` / `dry_run` / `verbose` / `skip_records` と同種）だから。
+`ApiConfig` は `Translator` に渡される LLM 接続設定で、`retry_failed` は CLI の実行フロー制御に属する。
+両者を混ぜないことで `Translator` のテスト容易性も保たれる（`Translator` は `retry_failed` を知らない）。
+
+### なぜ `bool | None = None` パターンか
+
+Typer の `--flag/--no-flag` 構文で **3状態**（`True` / `False` / 未指定）を区別するため。
+`bool = False`（2状態）では「`--no-retry-failed` を明示した」と「何も指定しなかった」を区別できず、
+`iroiro.toml` の `retry_failed = true` を上書きできなくなってしまう（T126/T127 の肝）。
+`None` を「未指定」とし、v0.3 の `_resolve()` helper で `is None` 判定する（`or` 演算子は falsy 事故を
+起こすので使わない・詳細は「設定ファイル読込の設計（v0.3）」を参照）。
+
+### なぜ `_validate_bool` は厳格 bool か
+
+`retry_failed = 1` のような書き間違いを暗黙に受け入れると、`if retry_failed:` で truthy 扱いされて
+**意図せず** 全 `failed` エントリが再試行対象になる事故に繋がるため。Python では `bool ⊂ int`
+（`isinstance(True, int) == True`）だが `isinstance(1, bool) == False` なので、`1` / `0` は
+`IroiroError` で拒否される。他の数値フィールド（`timeout` / `concurrency` / `max_chars`）が `bool` を
+拒否するのと対称的な「厳格 bool」思想（計画書 §4.4 / T113）。
+
+### なぜ `--retry-failed` 単独（`--resume` 無し）を exit 2 にしないか
+
+`--resume` 無しでは `progress.json` が読み込まれないため、`failed` を `pending` に戻す対象もありません。
+無意味な指定ですが、**exit 2 にする程のエラーではない** と判断しました。WARNING ログを出して通常実行を
+継続することで、ユーザーが `--resume` 忘れに気づけるようにしています（計画書 §11.4 / T129）。
+
+---
+
 ## 制限事項
 
 - **用語集**: 未対応（PR 歓迎）

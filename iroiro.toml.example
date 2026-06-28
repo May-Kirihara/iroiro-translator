@@ -1,4 +1,4 @@
-# iroiro-translator 設定ファイル（v0.3）
+# iroiro-translator 設定ファイル（v0.3 / v0.4）
 #
 # 使い方:
 #   1. このファイルを `iroiro.toml` にコピー
@@ -31,9 +31,10 @@
 # 詳細は docs/usage.md / docs/design.md を参照。
 
 [iroiro]
-# api_base    = "http://localhost:8081/v1"   # OpenAI 互換 API のベース URL（非空）
-# api_key     = "iroiro"                      # API キー（"" 許可・llama.cpp は検証しない）
-# model       = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"  # モデル名（非空）
-# timeout     = 120.0                         # 1リクエストの読み出しタイムアウト秒（> 0）
-# concurrency = 1                             # 同時リクエスト数（>= 1）
-# max_chars   = 4000                          # 1エントリの最大文字数（>= 0・0 は全件スキップ）
+# api_base      = "http://localhost:8081/v1"   # OpenAI 互換 API のベース URL（非空）
+# api_key       = "iroiro"                      # API キー（"" 許可・llama.cpp は検証しない）
+# model         = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"  # モデル名（非空）
+# timeout       = 120.0                         # 1リクエストの読み出しタイムアウト秒（> 0）
+# concurrency   = 1                             # 同時リクエスト数（>= 1）
+# max_chars     = 4000                          # 1エントリの最大文字数（>= 0・0 は全件スキップ）
+# retry_failed  = false                         # resume 時に failed を再試行するか（bool 厳格・v0.4 追加）

@@ -163,6 +163,14 @@ def translate(
         False, "--dry-run", help="LLM を呼ばず処理件数のみ表示"
     ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="詳細ログ"),
+    retry_failed: bool | None = typer.Option(
+        None,
+        "--retry-failed/--no-retry-failed",
+        help=(
+            "resume 時に failed エントリを再翻訳対象に戻す"
+            "（未指定時は iroiro.toml → 内蔵デフォルト False）"
+        ),
+    ),
     no_skip_default_records: bool = typer.Option(
         False,
         "--no-skip-default-records",
@@ -219,6 +227,11 @@ def translate(
     else:
         skip_records = DEFAULT_SKIP_RECORDS | _parse_skip_records(skip_records_text)
 
+    # v0.4（Plan 004 §4.1）: retry_failed も同じ優先順位で解決する。
+    # ``bool | None = None`` で3状態（未指定=None / True / False）を区別するため、
+    # ``_resolve`` の ``is None`` 判定がそのまま働く（T126/T127 の肝）。
+    retry_failed_resolved = _resolve(retry_failed, file_cfg, "retry_failed", False)
+
     cfg = RunConfig(
         input_path=input,
         output_path=output_path,
@@ -227,6 +240,7 @@ def translate(
         dry_run=dry_run,
         verbose=verbose,
         skip_records=skip_records,
+        retry_failed=retry_failed_resolved,
     )
 
     asyncio.run(_run(cfg))
@@ -245,6 +259,16 @@ def _progress_path(input_path: Path) -> Path:
 async def _run(cfg: RunConfig) -> None:
     """``translate`` コマンドの本体（非同期）。"""
     console = iroiro_logging.get_console()
+
+    # v0.4（Plan 004 §11.4）: ``--retry-failed`` 単独（``--resume`` 無し）は無意味
+    # （progress.json が読み込まれないため pending 戻しも発生しない）だが、
+    # exit 2 にする程のエラーではない。WARNING ログを出して通常実行を継続する
+    # （ユーザーが ``--resume`` 忘れに気づけるよう・T129）。
+    if cfg.retry_failed and not cfg.resume:
+        iroiro_logging.warn(
+            "--retry-failed が指定されましたが --resume が無いため、"
+            "failed エントリの再試行は行われません（通常実行になります）"
+        )
 
     # ---- 1. parse ----
     iroiro_logging.info("Parsing input: %s", cfg.input_path)
@@ -284,7 +308,7 @@ async def _run(cfg: RunConfig) -> None:
                 len(existing.entries),
                 len(existing.failed),
             )
-            _apply_existing(entries, existing)
+            _apply_existing(entries, existing, retry_failed=cfg.retry_failed)
         else:
             iroiro_logging.info("Resume requested but no existing progress.json found")
 
@@ -351,21 +375,39 @@ async def _run(cfg: RunConfig) -> None:
     console.print(f"進捗: {progress_path}")
 
 
-def _apply_existing(entries: list[StringEntry], existing: ProgressData) -> None:
+def _apply_existing(
+    entries: list[StringEntry],
+    existing: ProgressData,
+    retry_failed: bool = False,
+) -> None:
     """``load_existing`` の結果を entries に反映する。
 
     * ``existing.entries[index]`` → ``state=translated``, ``new_dest=loaded``
-    * ``existing.failed`` に index がある → ``state=failed``, ``new_dest=original_dest``
+      （最優先・``retry_failed`` に関わらず確定）
+    * ``existing.failed`` に index がある → ``retry_failed`` で分岐:
+        - ``retry_failed=False``（デフォルト・v0.3 互換）:
+          ``state=failed``, ``new_dest=original_dest``（従来動作・回帰保証）
+        - ``retry_failed=True``（v0.4）:
+          ``state=pending`` のまま（``new_dest`` は触らない・``original_dest`` を保持）。
+          再翻訳対象になる。出力XMLの ``<Dest>`` は翻訳が終わるまで ``original_dest``。
 
     これにより、resume 時に出力XMLの ``<Dest>`` が progress.json の訳文になる。
+    失敗時も ``<Source>`` で上書きせず ``original_dest`` を保持（Plan §5.6.3「``<Dest>`` 保護」）。
     """
     for entry in entries:
         if entry.index in existing.entries:
             entry.new_dest = existing.entries[entry.index]
             entry.state = "translated"
         elif entry.index in existing.failed:
-            entry.new_dest = entry.original_dest
-            entry.state = "failed"
+            if retry_failed:
+                # v0.4: 再試行対象・pending のまま（new_dest は original_dest を保持）
+                # 触らないことで ``original_dest`` がそのまま出力XMLに反映される
+                pass
+            else:
+                # 従来動作: failed 確定・original_dest を保持
+                entry.new_dest = entry.original_dest
+                entry.state = "failed"
+        # else: 未処理・state=pending のまま（触らない）
 
 
 async def _translate_all(

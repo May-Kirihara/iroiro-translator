@@ -27,6 +27,10 @@ class RunConfig:
         verbose: ``-v`` フラグ。詳細ログ。
         skip_records: スキップ対象 REC 型のセット（v0.2 追加）。
             ``--no-skip-default-records`` / ``--skip-records`` から構築される。
+        retry_failed: ``--retry-failed`` フラグ（v0.4 追加）。resume 時に
+            ``failed`` エントリを ``state=pending`` に戻して再翻訳対象にする。
+            デフォルト ``False``（後方互換・v0.3 までと同じ挙動）。優先順位は
+            CLI ``--retry-failed`` / ``--no-retry-failed`` ＞ iroiro.toml ＞ False。
     """
 
     input_path: Path
@@ -36,6 +40,7 @@ class RunConfig:
     dry_run: bool
     verbose: bool
     skip_records: frozenset[str]
+    retry_failed: bool
 
 
 # ===========================================================================
@@ -186,7 +191,24 @@ def _validate_max_chars(v: object, key: str, path: Path) -> int:
     return _validate_int_min(v, key, path, 0)
 
 
-# key -> validator（戻り値は検証済みの str/int/float・dict[str, object] に代入可能）
+def _validate_bool(v: object, key: str, path: Path) -> bool:
+    """厳格 ``bool`` を検証（``retry_failed`` 用・v0.4 追加）。
+
+    Python では ``bool ⊂ int``（``isinstance(True, int) == True``）だが、
+    ``isinstance(1, bool) == False`` なので ``int`` 値（``1`` / ``0``）は拒否される。
+    他の数値フィールド（timeout / concurrency / max_chars）が ``bool`` を拒否するのと
+    対称的な「厳格 bool」思想。``retry_failed = 1`` のような書き間違いを暗黙に受け入れると、
+    ``if retry_failed:`` で truthy 扱いされて **意図せず** 全 failed エントリが再試行対象に
+    変わる事故に繋がるため、厳格 bool 以外は全て拒否する（Plan 004 §4.4 / T113）。
+    """
+    if not isinstance(v, bool):
+        raise IroiroError(
+            f"{key} must be bool, got {type(v).__name__} in {path}"
+        )
+    return v
+
+
+# key -> validator（戻り値は検証済みの str/int/float/bool・dict[str, object] に代入可能）
 _VALIDATORS: dict[str, Callable[[object, str, Path], object]] = {
     "api_base": _validate_str_nonempty,
     "api_key": _validate_str_allow_empty,
@@ -194,4 +216,5 @@ _VALIDATORS: dict[str, Callable[[object, str, Path], object]] = {
     "timeout": _validate_number_positive,
     "concurrency": _validate_concurrency,
     "max_chars": _validate_max_chars,
+    "retry_failed": _validate_bool,  # v0.4 追加
 }

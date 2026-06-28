@@ -1,0 +1,8 @@
+# iroiro_retry_false.toml — retry_failed = false のみ記述（T111 / T127 用）
+#
+# Plan 004 §4.4: retry_failed のデフォルトは False（後方互換・v0.3 までと同じ挙動）。
+# 明示的に ``false`` と書いた場合も load_config は ``{"retry_failed": False}`` を返す
+# （dict のキーに含まれる点が「未記述」と異なる・呼出側の _resolve で False が明示採用される）。
+
+[iroiro]
+retry_failed = false

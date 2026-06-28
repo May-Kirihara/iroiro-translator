@@ -1,0 +1,8 @@
+# iroiro_retry_true.toml — retry_failed = true のみ記述（T110 / T126 用）
+#
+# Plan 004 §4.4: retry_failed は厳格 bool のみ許可。``true`` は ``True`` として
+# 反映される（resume 時に failed エントリを state=pending に戻す = 再翻訳対象）。
+# 検証容易性のため retry_failed 以外の項目は書かない（他は内蔵デフォルトに落ちる）。
+
+[iroiro]
+retry_failed = true

@@ -19,7 +19,7 @@ BOM / CRLF / `standalone="yes"` 宣言 / 空要素 `<X></X>` 形式を保持し�
 
 ```bash
 uv sync                                        # 依存関係インストール（dev extras 含む）
-uv run pytest                                  # テスト（144件）
+uv run pytest                                  # テスト（165件）
 uv run pytest -k "xml_io"                      # 個別テスト
 uv run ruff check iroiro/ tests/               # lint
 uv run mypy iroiro                             # 型チェック
@@ -148,3 +148,5 @@ Conventional Commits 風のプレフィックスを使用:
 - [docs/handoff/001-initial.md](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
 - [docs/plans/003-config-file.md](docs/plans/003-config-file.md) — v0.3 設定ファイル（`iroiro.toml`）の設計判断・却下代替案
 - [docs/handoff/003-config-file.md](docs/handoff/003-config-file.md) — v0.3 完了時の引き継ぎメモ・検証結果
+- [docs/plans/004-retry-failed.md](docs/plans/004-retry-failed.md) — v0.4 failed エントリ再試行（`--retry-failed` / `retry_failed`）の設計判断・却下代替案
+- [docs/handoff/004-retry-failed.md](docs/handoff/004-retry-failed.md) — v0.4 完了時の引き継ぎメモ・検証結果

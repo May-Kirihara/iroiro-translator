@@ -440,3 +440,109 @@ def test_T102_max_chars_zero_accepted(
     assert result["max_chars"] == 0, (
         f"max_chars = 0 は正当値として受理: 実際 {result.get('max_chars')!r}"
     )
+
+
+# ===========================================================================
+# v0.4: T110-T113 — retry_failed 設定の検証（Plan 004 §4.4 / §6.1）
+#
+# retry_failed は厳格 bool（``isinstance(v, bool)``）のみ許可:
+#   - ``true``  / ``false`` → そのまま bool として返す
+#   - ``1`` / ``0``（int）  → 拒否（Python ``bool ⊂ int`` 事故防止）
+#   - ``"true"`` / ``"false"``（文字列） → 拒否
+#
+# デフォルト False（後方互換・v0.3 までと同じ挙動）。優先順位は Plan 003 と同じ:
+#   CLI ``--retry-failed`` / ``--no-retry-failed`` ＞ iroiro.toml ＞ 内蔵 False
+#
+# ※ 他の数値フィールド（timeout / concurrency / max_chars）は bool を拒否するが、
+#    retry_failed は bool を **要求** する点が逆（同じ「厳格 bool」思想の両面）。
+# ===========================================================================
+
+
+def test_T110_retry_failed_true(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T110: ``retry_failed = true`` → ``{"retry_failed": True}`` を返す。
+
+    Plan 004 §4.4: 厳格 bool のみ許可。``true`` は ``True`` として反映される。
+    resume 時に failed エントリを state=pending に戻す（再翻訳対象）。
+    """
+    shutil.copy(FIXTURES_DIR / "iroiro_retry_true.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = load_config(None)
+
+    assert result == {"retry_failed": True}, (
+        f"retry_failed = true が bool True として返る: 実際 {result!r}"
+    )
+
+
+def test_T111_retry_failed_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T111: ``retry_failed = false`` → ``{"retry_failed": False}`` を返す。
+
+    Plan 004 §4.4: ``false`` は ``False`` として反映される。デフォルト（未記述）と
+    同じ値だが、明示的に記述された場合は dict のキーに含まれる点が異なる
+    （呼出側の ``_resolve`` で False が明示採用される）。
+    """
+    shutil.copy(FIXTURES_DIR / "iroiro_retry_false.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = load_config(None)
+
+    assert result == {"retry_failed": False}, (
+        f"retry_failed = false が bool False として返る: 実際 {result!r}"
+    )
+
+
+def test_T112_retry_failed_string_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T112: ``retry_failed = "true"``（文字列） → ``IroiroError``。
+
+    Plan 004 §4.4: 厳格 bool のみ許可。TOML の文字列 ``"true"`` は bool でないため
+    型エラーで拒否される（``"false"`` / ``"yes"`` / ``"on"`` 等も同様）。
+    ユーザーが YAML 等と勘違いして文字列で書く事故を防ぐ。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\nretry_failed = "true"\n', encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(IroiroError) as exc_info:
+        load_config(None)
+
+    # エラーメッセージにキー名または想定型が言及される（実装依存の詳細は問わない）
+    msg = str(exc_info.value).lower()
+    assert "retry_failed" in msg or "bool" in msg, (
+        f"エラーメッセージにキー名または bool が言及される: 実際 {msg!r}"
+    )
+
+
+def test_T113_retry_failed_int_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T113: ``retry_failed = 1``（int） → ``IroiroError``（``bool ⊂ int`` 事故防止）。
+
+    Plan 004 §4.4: Python では ``isinstance(True, int) == True`` だが
+    ``isinstance(1, bool) == False``。``retry_failed = 1`` のような書き間違いを
+    暗黙に受け入れると、``if retry_failed:`` で truthy 扱いされて **意図せず**
+    全 failed エントリが再試行対象に変わる事故に繋がるため、厳格 bool 以外は拒否する。
+    他の数値フィールド（timeout 等）が bool を拒否するのと対称的な検証。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\nretry_failed = 1\n', encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(IroiroError) as exc_info:
+        load_config(None)
+
+    msg = str(exc_info.value).lower()
+    assert "retry_failed" in msg or "bool" in msg, (
+        f"エラーメッセージにキー名または bool が言及される: 実際 {msg!r}"
+    )

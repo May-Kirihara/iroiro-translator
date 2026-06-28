@@ -24,6 +24,7 @@ Skyrim MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods
 - **失敗時の `<Dest>` 保護** — 翻訳失敗・スキップ時は元の `<Dest>` を保持し、`<Source>` で上書きしない
 - **翻訳スキップ REC 型**（v0.2）— 内部管理用レコード（`HDPT:FULL` 等12件）を自動スキップ。`--no-skip-default-records` / `--skip-records` で制御。詳細は [docs/usage.md](docs/usage.md)
 - **設定ファイル**（v0.3）— 繰り返し使う設定（LLM エンドポイント・API キー・モデル名・タイムアウト等）を `iroiro.toml` に書いておけます。`.gitignore` 対象・環境依存情報をプロジェクトに混入させない。詳細は [docs/usage.md](docs/usage.md)
+- **failed エントリの再試行**（v0.4）— LLM の一時的エラー等で `failed` になったエントリを `--retry-failed` で再翻訳対象に戻せる。`iroiro.toml` の `retry_failed = true` でデフォルト化も可。詳細は [docs/usage.md](docs/usage.md)
 - **再開機能**（`--resume`） — 進捗ファイルから続きを実行
 - **dry-run モード**（`--dry-run`） — LLM を呼ばず処理件数のみ表示
 - **並列実行**（`--concurrency`） と **HTTP タイムアウト設定**（`--timeout`）
@@ -116,6 +117,7 @@ uv run iroiro translate path/to/your_mod.xml
 
 - `--dry-run` — LLM を呼ばず処理件数のみ表示
 - `--resume` — `progress.json` があれば続きから再実行
+- `--resume --retry-failed` — resume 時に `failed` エントリも再翻訳対象に戻す（v0.4）
 - `--api-base URL` — OpenAI 互換 API のベース URL（LM Studio / Ollama 等の切り替え）
 
 CLI フラグ全一覧・設定例・トラブルシュートは [詳細な使い方](docs/usage.md) を参照。
@@ -130,9 +132,11 @@ CLI フラグ全一覧・設定例・トラブルシュートは [詳細な使�
 - [実装計画 v0.1](docs/plans/001-initial.md) — v0.1 初期実装の設計判断・却下代替案の経緯
 - [実装計画 v0.2](docs/plans/002-skip-records.md) — v0.2 翻訳スキップ REC 型の設計判断
 - [実装計画 v0.3](docs/plans/003-config-file.md) — v0.3 設定ファイル（`iroiro.toml`）の設計判断
+- [実装計画 v0.4](docs/plans/004-retry-failed.md) — v0.4 failed エントリ再試行（`--retry-failed`）の設計判断
 - [引き継ぎ v0.1](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.2](docs/handoff/002-skip-records.md) — v0.2 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.3](docs/handoff/003-config-file.md) — v0.3 完了時の引き継ぎメモ・検証結果
+- [引き継ぎ v0.4](docs/handoff/004-retry-failed.md) — v0.4 完了時の引き継ぎメモ・検証結果
 
 ---
 

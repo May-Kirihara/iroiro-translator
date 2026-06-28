@@ -110,23 +110,43 @@ class ProgressWriter:
         """``index`` を訳文 ``dest`` で完了扱いにする。
 
         entries dict に ``str(index) -> dest`` をセットして ``_flush`` する。
+
+        v0.4（Plan 004 §4.6）: ``failed`` に同じ ``index`` があれば削除する。
+        これにより ``retry_failed=True`` で再試行して成功した場合でも
+        **不変性** ``entries ∩ failed = ∅`` を保証する。progress.json と
+        「Resuming: X translated, Y failed」メッセージが常に整合する。
+
+        v0.4 Codex review 対応（N1）: ``list.remove(index)`` は最初に見つかった
+        要素しか消さないため、``failed=[5, 5]`` のような重複がある progress.json
+        （v0.3 以前生成）との整合性で **同 index を全件削除** する必要がある。
+        リスト内包表記で再構築することでこれを保証する。
         """
         async with self._lock:
             entries = self._data["entries"]
             assert isinstance(entries, dict)
             entries[str(index)] = dest
+            # v0.4: retry 成功時に failed から index を全件削除（不変性保証）
+            # ※ list.remove(index) は最初の1件しか消さないため、既存重複 progress.json
+            #    （v0.3 以前生成）との整合性で全件削除が必要
+            failed = self._data["failed"]
+            assert isinstance(failed, list)
+            if index in failed:
+                self._data["failed"] = [x for x in failed if x != index]
             self._flush()
 
     async def mark_failed(self, index: int) -> None:
         """``index`` を失敗リストに追記する。
 
-        再試行は行わず、単に ``failed`` リストに append する。
-        （Plan §5.8: resume 時の failed index は再試行しない）
+        v0.4（Plan 004 §4.6）: 重複チェックを追加。``failed`` に既に ``index`` が
+        含まれている場合は append しない。``retry_failed=True`` で再試行 → 再失敗
+        を繰り返しても同じ ``index`` が重複して progress.json に書き込まれるのを
+        防止する（failed リストの膨張防止）。
         """
         async with self._lock:
             failed = self._data["failed"]
             assert isinstance(failed, list)
-            failed.append(index)
+            if index not in failed:  # v0.4: 重複チェック
+                failed.append(index)
             self._flush()
 
     def _flush(self) -> None:

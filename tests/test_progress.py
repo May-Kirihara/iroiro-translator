@@ -196,15 +196,22 @@ async def test_T22_concurrent_mark_done_100_entries(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_T23_mark_failed_appends(tmp_path: Path) -> None:
-    """T23: mark_failed を呼ぶと failed リストに index が追加される。"""
+    """T23: mark_failed を呼ぶと failed リストに index が追加される。
+
+    v0.4（Plan 004 §4.6）で ``mark_failed`` に重複チェックが入り、同じ index の
+    2回目以降の呼出は無視される（従来は append 式で重複が発生し得た）。
+    本テストの assert は「5 と 7 が共に含まれる」ことのみを検証するため、
+    重複排除の前後を通じて green を保つ（単発呼出の挙動は変わらない）。
+    重複排除自体の検証は T118（同 index 2回呼出 → 1個だけ）で担保する。
+    """
     writer = _make_writer(tmp_path)
     await writer.mark_failed(5)
     await writer.mark_failed(7)
-    await writer.mark_failed(5)  # 重複しても追記される（実装依存だが追記式）
+    await writer.mark_failed(5)  # v0.4: 重複チェックにより無視される（T118 で検証）
 
     data = writer.load_existing()
     assert data is not None
-    # 5, 7 が含まれる（重複含むかどうかは実装依存だが、少なくとも両方存在）
+    # 5, 7 が共に含まれる（重複排除後も両方存在・単発呼出の挙動は不変）
     assert 5 in data.failed
     assert 7 in data.failed
 
@@ -730,3 +737,198 @@ async def test_T84b_resume_preserves_existing_failed_on_mark_failed(
     assert raw["failed"] == [10, 20, 30], (
         f"既存 [10,20] + 新 [30] = [10,20,30]: 実際 {raw['failed']}"
     )
+
+
+# ===========================================================================
+# v0.4: T118-T121 — mark_failed 重複チェック / mark_done failed クリア
+#
+# Plan 004 §4.6 で明文化された **不変性**: ある index は同時に entries と
+# failed に存在しない（``entries ∩ failed = ∅``）。これを保証するため両メソッドを拡張:
+#   - ``mark_failed(i)``: ``failed`` に ``i`` が無ければ追加（重複排除）
+#   - ``mark_done(i, ...)``: ``entries`` に ``i`` を追加後、``failed`` に ``i``
+#     があれば削除（retry 成功時のクリア）
+# これにより ``retry_failed=True`` で再試行 → 成功/再失敗 の両経路で
+# progress.json と「Resuming: X translated, Y failed」メッセージが整合する。
+#
+# ※ T122 は独立したテスト関数でなく T23 のコメント更新（v0.4 の重複排除仕様に
+#    合わせた docstring / コメントの修正）として扱う。T23 の assert 自体は維持。
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_T118_mark_failed_dedup(tmp_path: Path) -> None:
+    """T118: 同じ index を2回 mark_failed しても failed は1個だけ（重複排除）。
+
+    Plan 004 §4.6: ``mark_failed()`` は ``if index not in failed`` で重複を弾く。
+    ``retry_failed=True`` で再試行 → 再失敗 を繰り返しても同じ index が重複して
+    progress.json に書き込まれるのを防止する（failed リストの膨張防止）。
+    """
+    writer = _make_writer(tmp_path)
+
+    await writer.mark_failed(3)
+    await writer.mark_failed(3)  # 重複
+    await writer.mark_failed(3)  # さらにもう1回
+
+    data = writer.load_existing()
+    assert data is not None
+    assert data.failed.count(3) == 1, (
+        f"同じ index は1回だけ記録される（重複排除）: 実際 {data.failed}"
+    )
+    assert data.failed == [3], f"failed は [3] のみ: 実際 {data.failed}"
+
+
+@pytest.mark.asyncio
+async def test_T119_mark_failed_distinct_indices(tmp_path: Path) -> None:
+    """T119: 異なる index を mark_failed した場合は両方記録される（正常系）。
+
+    重複チェックが「全ての呼出を無視する」のでなく「同じ index のみ無視する」
+    ことを検証する（T118 の対になる正常系）。
+    """
+    writer = _make_writer(tmp_path)
+
+    await writer.mark_failed(3)
+    await writer.mark_failed(7)
+
+    data = writer.load_existing()
+    assert data is not None
+    assert data.failed == [3, 7], (
+        f"異なる index は両方記録される: 実際 {data.failed}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_T120_mark_done_does_not_touch_failed_when_absent(
+    tmp_path: Path,
+) -> None:
+    """T120: ``mark_done(i, ...)`` 後・i が failed に無い → 追加なし（回帰保証）。
+
+    Plan 004 §4.6: ``mark_done()`` は entries に追記するのみ。``failed`` に ``i``
+    が無い場合は failed リストを触らない（従来動作・v0.4 でも変更無し）。
+    「何も無い所から failed に index が増えることは無い」ことで回帰を保証する。
+    """
+    writer = _make_writer(tmp_path)
+
+    # i=5 は初回・failed には無い
+    await writer.mark_done(5, "訳文5")
+
+    data = writer.load_existing()
+    assert data is not None
+    assert data.entries == {5: "訳文5"}
+    assert data.failed == [], (
+        f"mark_done は failed を触らない（i が failed に無い場合）: 実際 {data.failed}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_T121_mark_done_clears_failed_on_retry_success(
+    tmp_path: Path,
+) -> None:
+    """T121: ``mark_done(i, ...)`` 後・i が failed に有った → failed から削除（v0.4 新機能）。
+
+    Plan 004 §4.6: ``retry_failed=True`` で再試行して成功した場合、``mark_done()``
+    が ``entries`` に ``i`` を追加した **後**、``failed`` に同じ ``i`` があれば削除する。
+    これにより不変性 ``entries ∩ failed = ∅`` を保証する。T125（CLI 統合）と対になる
+    ProgressWriter 単体レベルの検証。
+
+    再現手順:
+      1. ``failed=[5]`` を持つ progress.json を作成（load_existing で self._data に統合）
+      2. ``mark_done(5, "新訳文")`` を呼ぶ（retry 成功を模擬）
+      3. progress.json を読み直し、failed から 5 が消え、entries["5"] に訳文が入ったことを検証
+    """
+    progress_path = tmp_path / "input.iroiro-progress.json"
+    existing_data = {
+        "input_path": "test.xml",
+        "input_hash": "hash_T121",
+        "api_base": "http://localhost:8081/v1",
+        "model": "test-model",
+        "skip_records_fingerprint": "",
+        "entries": {0: "訳文0"},  # 別 index は既に翻訳済
+        "failed": [5],  # i=5 は前回失敗
+    }
+    progress_path.write_text(
+        json.dumps(existing_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    writer = ProgressWriter(
+        progress_path=progress_path,
+        input_path=Path("test.xml"),
+        input_hash="hash_T121",
+        api_base="http://localhost:8081/v1",
+        model="test-model",
+        skip_records_fingerprint="",
+    )
+    existing = writer.load_existing()
+    assert existing is not None
+    assert existing.failed == [5], "前提: failed に 5 が入っている"
+
+    # retry 成功: mark_done(5, ...) で entries に追加 → failed から 5 を削除
+    await writer.mark_done(5, "再翻訳成功")
+
+    raw = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert raw["entries"]["5"] == "再翻訳成功", (
+        f"entries['5'] に再翻訳の訳文が入る: 実際 {raw['entries']!r}"
+    )
+    assert 5 not in raw["failed"], (
+        f"failed から 5 が削除される（不変性: entries ∩ failed = ∅）: "
+        f"実際 {raw['failed']!r}"
+    )
+    # 既存の entries[0] は保持される（T84 と同じ critical 回帰の保護）
+    assert raw["entries"]["0"] == "訳文0"
+
+
+@pytest.mark.asyncio
+async def test_T130_mark_done_clears_all_duplicate_failed(tmp_path: Path) -> None:
+    """T130: failed に重複 index がある場合、mark_done で全件削除される（不変性保証）。
+
+    v0.4 Codex review 指摘（N1）: ``list.remove(index)`` は最初に見つかった要素しか
+    消さないため、``failed=[5, 5]`` のような重複がある progress.json（v0.3 以前生成）
+    との整合性で全件削除が必要。リスト内包表記で同 index を全件削除することで
+    **不変性** ``entries ∩ failed = ∅`` を保証する。
+
+    再現手順:
+      1. ``failed=[5, 5]`` を持つ progress.json を作成（load_existing で self._data に統合）
+      2. ``mark_done(5, "translated")`` を呼ぶ（retry 成功を模擬）
+      3. progress.json を読み直し、``failed == []``（全件削除）・
+         ``entries["5"] == "translated"`` を検証
+    """
+    progress_path = tmp_path / "input.iroiro-progress.json"
+    existing_data = {
+        "input_path": "test.xml",
+        "input_hash": "hash_T130",
+        "api_base": "http://localhost:8081/v1",
+        "model": "test-model",
+        "skip_records_fingerprint": "",
+        "entries": {0: "訳文0"},  # 別 index は既に翻訳済
+        "failed": [5, 5],  # ★ index 5 が重複（v0.3 以前生成の progress.json を模擬）
+    }
+    progress_path.write_text(
+        json.dumps(existing_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    writer = ProgressWriter(
+        progress_path=progress_path,
+        input_path=Path("test.xml"),
+        input_hash="hash_T130",
+        api_base="http://localhost:8081/v1",
+        model="test-model",
+        skip_records_fingerprint="",
+    )
+    existing = writer.load_existing()
+    assert existing is not None
+    assert existing.failed == [5, 5], "前提: failed に 5 が2個入っている（重複）"
+
+    # retry 成功: mark_done(5, ...) で entries に追加 → failed から 5 を **全件** 削除
+    await writer.mark_done(5, "translated")
+
+    raw = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert raw["entries"]["5"] == "translated", (
+        f"entries['5'] に訳文が入る: 実際 {raw['entries']!r}"
+    )
+    assert raw["failed"] == [], (
+        f"failed から 5 が全件削除される（list.remove は最初の1件しか消さないため"
+        f"リスト内包表記で全削除が必要・不変性保証）: 実際 {raw['failed']!r}"
+    )
+    # 既存の entries[0] は保持される（T84 と同じ critical 回帰の保護）
+    assert raw["entries"]["0"] == "訳文0"
