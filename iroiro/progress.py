@@ -143,6 +143,11 @@ class ProgressWriter:
     def load_existing(self) -> ProgressData | None:
         """既存の ``progress.json`` を読み込む。
 
+        成功時は戻り値の ``ProgressData`` を返すと同時に、読み込んだ
+        ``entries`` / ``failed`` を ``self._data`` へ統合する。これにより
+        resume 後の ``mark_done`` / ``mark_failed`` が既存翻訳を保持した
+        まま追記される（既存 entries が ``_flush`` で消失するのを防ぐ）。
+
         Returns:
             ``ProgressData``。ファイルが存在しない場合は ``None``。
 
@@ -207,6 +212,14 @@ class ProgressWriter:
                     failed.append(int(x))
                 except (TypeError, ValueError):
                     continue
+
+        # ★ critical fix: 既存の entries / failed を self._data に統合
+        # これにより resume 後の mark_done / mark_failed が既存翻訳を
+        # 保持したまま追加される（v0.1 からの潜在バグ修正）。
+        # entries は dict[int, str] だが self._data["entries"] は str キーを
+        # 想定（mark_done が str(index) で書き込むため）へ変換する。
+        self._data["entries"] = {str(k): v for k, v in entries.items()}
+        self._data["failed"] = list(failed)
 
         return ProgressData(
             entries=entries,

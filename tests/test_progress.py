@@ -603,3 +603,130 @@ async def test_T83b_empty_fingerprint_also_persisted(tmp_path: Path) -> None:
     assert raw["skip_records_fingerprint"] == "", (
         "空 set の fingerprint は空文字列として保存される"
     )
+
+
+# ===========================================================================
+# T84 (critical regression): resume 後の mark_done が既存 entries を保持する
+#
+# v0.1-v0.2 で発見された critical データ消失バグの回帰テスト:
+#   - ProgressWriter.__init__ が self._data["entries"] = {} で初期化
+#   - load_existing が ProgressData 戻り値を返すだけで self._data を更新しなかった
+#   - そのため resume 後の mark_done → _flush が既存 entries を消していた
+# 修正後は load_existing が self._data["entries"] / ["failed"] に既存内容を
+# 統合するので、mark_done が既存+新規の両方を保持する。
+# 参考: AGENTS.md「XML 安全性の鉄則 — 失敗・スキップ時は元の <Dest> を保持」の
+# 進捗ファイル版に相当（翻訳済み成果物の消失防止）。
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_T84_resume_preserves_existing_entries_on_mark_done(
+    tmp_path: Path,
+) -> None:
+    """T84: resume 後の mark_done が既存 entries を保持する（critical 回帰）。
+
+    再現手順:
+      1. 既存 progress.json（3件）を作成
+      2. ProgressWriter で load_existing
+      3. mark_done で新1件追加
+      4. progress.json を読み直し、既存3件 + 新1件 = 4件であることを検証
+    """
+    # 既存 progress.json を作成（3件の訳文）
+    progress_path = tmp_path / "test.json.iroiro-progress.json"
+    existing_data = {
+        "input_path": "test.xml",
+        "input_hash": "hash_T84",
+        "api_base": "http://localhost:8081/v1",
+        "model": "test-model",
+        "skip_records_fingerprint": "",
+        "entries": {
+            "701": "視覚的な美しさを。",
+            "1102": "客がお金を払ってお尻を使えば、もっと稼げる。",
+            "1184": "口塞ぎ",
+        },
+        "failed": [],
+    }
+    progress_path.write_text(
+        json.dumps(existing_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    # ProgressWriter を作成して load_existing
+    writer = ProgressWriter(
+        progress_path=progress_path,
+        input_path=Path("test.xml"),
+        input_hash="hash_T84",
+        api_base="http://localhost:8081/v1",
+        model="test-model",
+        skip_records_fingerprint="",
+    )
+    existing = writer.load_existing()
+    assert existing is not None
+    assert len(existing.entries) == 3, "load_existing が既存3件を返す"
+
+    # mark_done を呼ぶ（新4件目）
+    await writer.mark_done(999, "新規訳文")
+
+    # progress.json を読み直して検証
+    raw = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert len(raw["entries"]) == 4, (
+        f"既存3件 + 新1件 = 4件であるべき: 実際 {len(raw['entries'])}件"
+    )
+    # 既存3件が保持されている
+    assert raw["entries"]["701"] == "視覚的な美しさを。"
+    assert raw["entries"]["1102"] == "客がお金を払ってお尻を使えば、もっと稼げる。"
+    assert raw["entries"]["1184"] == "口塞ぎ"
+    # 新1件が追加されている
+    assert raw["entries"]["999"] == "新規訳文"
+
+
+@pytest.mark.asyncio
+async def test_T84b_resume_preserves_existing_failed_on_mark_failed(
+    tmp_path: Path,
+) -> None:
+    """T84b: resume 後の mark_failed も既存 failed リストを保持する。
+
+    T84 の対となる failed 側の回帰テスト。``self._data["failed"]`` も
+    load_existing で統合されるため、resume 後の mark_failed が
+    既存 failed index を保持したまま追記される。
+    """
+    progress_path = tmp_path / "input.iroiro-progress.json"
+    existing_data = {
+        "input_path": "test.xml",
+        "input_hash": "hash_T84b",
+        "api_base": "http://localhost:8081/v1",
+        "model": "test-model",
+        "skip_records_fingerprint": "",
+        "entries": {0: "訳文0"},
+        "failed": [10, 20],  # 既存の failed index
+    }
+    progress_path.write_text(
+        json.dumps(existing_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    writer = ProgressWriter(
+        progress_path=progress_path,
+        input_path=Path("test.xml"),
+        input_hash="hash_T84b",
+        api_base="http://localhost:8081/v1",
+        model="test-model",
+        skip_records_fingerprint="",
+    )
+    existing = writer.load_existing()
+    assert existing is not None
+    assert existing.failed == [10, 20]
+
+    # 新たに mark_failed（新1件）+ mark_done も併せて検証
+    await writer.mark_failed(30)
+    await writer.mark_done(99, "新規訳文")
+
+    raw = json.loads(progress_path.read_text(encoding="utf-8"))
+    # 既存 entries が保持されつつ新1件追加
+    assert raw["entries"] == {"0": "訳文0", "99": "新規訳文"}, (
+        "既存 entries 保持 + 新規 mark_done 追加"
+    )
+    # 既存 failed が保持されつつ新1件追加
+    assert raw["failed"] == [10, 20, 30], (
+        f"既存 [10,20] + 新 [30] = [10,20,30]: 実際 {raw['failed']}"
+    )
