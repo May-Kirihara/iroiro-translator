@@ -1,0 +1,9 @@
+# iroiro_partial.toml — 一部項目のみ記述（T90 用）
+#
+# api_base と model だけ記述。他の項目（api_key / timeout / concurrency / max_chars）は
+# 書かれていないため、load_config の戻り値 dict に含まれない（呼出側で内蔵デフォルト
+# に落ちる）。T90 では「その項目だけ反映され、残りは含まれない」ことを検証する。
+
+[iroiro]
+api_base = "http://partial:8080/v1"
+model    = "partial-model"

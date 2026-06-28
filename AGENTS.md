@@ -19,7 +19,7 @@ BOM / CRLF / `standalone="yes"` 宣言 / 空要素 `<X></X>` 形式を保持し�
 
 ```bash
 uv sync                                        # 依存関係インストール（dev extras 含む）
-uv run pytest                                  # テスト（73件）
+uv run pytest                                  # テスト（144件）
 uv run pytest -k "xml_io"                      # 個別テスト
 uv run ruff check iroiro/ tests/               # lint
 uv run mypy iroiro                             # 型チェック
@@ -45,10 +45,14 @@ iroiro-translator/
 ├── uv.lock             # uv が管理（触らない）
 ├── .python-version     # 3.12
 ├── .gitignore
+├── iroiro.toml.example # 設定ファイル雛形（git 管理対象・ダミー値のみ）
 ├── README.md
 ├── AGENTS.md           # 本ファイル
 └── LICENSE             # Apache 2.0
 ```
+
+> `iroiro.toml`（実体・個人環境依存の LLM 設定）は `.gitignore` 対象でコミットされません。
+> 各ユーザーが `cp iroiro.toml.example iroiro.toml` で作成します。
 
 ---
 
@@ -81,6 +85,7 @@ iroiro-translator/
 | 対象 | 理由 |
 |---|---|
 | `sample/` 配下 | 第三者著作物の MOD XML。`.gitignore` で除外済み。コミットしないこと |
+| `iroiro.toml`（実体） | 個人環境依存の LLM 設定（エンドポイント・API キー等）。`.gitignore` 対象・commit しない。`iroiro.toml.example`（雛形）は git 管理対象なので編集してよい |
 | `uv.lock` | uv が管理。手動編集しない（`uv sync` / `uv add` 経由でのみ更新） |
 | `docs/plans/`, `docs/handoff/` | 歴史的記録。変更が必要な場合は新規ファイル（`002-*.md` 等）で作成 |
 | テストの weakning / skip | 正当な理由がある場合のみ `@pytest.mark.skipif` を使用。安易な `pytest.skip` は禁止 |
@@ -141,3 +146,5 @@ Conventional Commits 風のプレフィックスを使用:
 - [docs/development.md](docs/development.md) — 開発環境・テスト・モジュール構成・ロードマップ
 - [docs/plans/001-initial.md](docs/plans/001-initial.md) — v0.1 初期実装の設計判断・却下代替案の経緯
 - [docs/handoff/001-initial.md](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
+- [docs/plans/003-config-file.md](docs/plans/003-config-file.md) — v0.3 設定ファイル（`iroiro.toml`）の設計判断・却下代替案
+- [docs/handoff/003-config-file.md](docs/handoff/003-config-file.md) — v0.3 完了時の引き継ぎメモ・検証結果

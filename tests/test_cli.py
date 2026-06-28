@@ -709,3 +709,377 @@ def test_T82_cli_resume_fingerprint_mismatch_exit_code_2(
     )
     # 出力ファイルは生成されない
     assert not output.exists(), "fingerprint mismatch 時は出力ファイルを生成しない"
+
+
+# ===========================================================================
+# v0.3: T103-T109 — iroiro.toml 設定ファイル対応の CLI 統合テスト
+#
+# Plan §6.2 / docs/plans/003-config-file.md: --config フラグと iroiro.toml の
+# 読み込み・優先順位を検証する。
+#
+# 検証方針:
+#   - dry-run では progress.json が作られず Translator も構築されないため、
+#     cfg.api を直接 capture して検証する（MockTranslator factory 経由）。
+#   - tiny.xml を tmp_path にコピーして使い、fixtures ディレクトリを汚さない
+#     （progress.json が <input>.iroiro-progress.json に作られるため）。
+#   - cwd は monkeypatch.chdir(tmp_path) で制御（iroiro.toml の有無を再現）。
+#
+# 優先順位（Plan §4.4）:
+#     強 ← CLI フラグ（明示指定時）＞ iroiro.toml ＞ 内蔵デフォルト → 弱
+#
+#   ※ `is None` 判定で `0` や `""` を falsy 扱いしない（T108/T109 の肝）。
+#      `or` 演算子は `0` や `""` を falsy 扱いしてしまうので絶対に使わない。
+# ===========================================================================
+
+
+@pytest.fixture
+def capture_api_config(monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """iroiro.cli.Translator を差し替え、構築された ApiConfig を capture する。
+
+    dry-run でない場合、``translate()`` は ``Translator(cfg.api)`` を呼ぶので、
+    その ``cfg.api``（ApiConfig インスタンス）を capture できる。
+    返り値の ``list[0]`` が構築された ApiConfig。
+
+    MockTranslator を差し込むので LLM は呼ばれない（tiny.xml で高速）。
+    """
+    captured: list[object] = []
+
+    def factory(cfg, client=None, **kwargs):
+        captured.append(cfg)
+        return MockTranslator(cfg, client=client)
+
+    monkeypatch.setattr("iroiro.cli.Translator", factory, raising=False)
+    monkeypatch.setattr("iroiro.translator.Translator", factory, raising=False)
+    return captured
+
+
+def _run_translate_with_config(
+    input_xml: Path,
+    *,
+    output: Path | None = None,
+    extra_args: list[str] | None = None,
+) -> object:
+    """``iroiro translate`` を最小限の引数で実行（config file テスト用）。
+
+    既存の :func:`_run_translate` と違い、``--api-base`` / ``--model`` 等を
+    自動付与しない。``extra_args`` で明示的に渡されたフラグのみを付ける。
+    これにより「フラグ無し」（toml またはデフォルトに落ちる）状況を再現できる。
+
+    ※ WP-2 完了前は ``--config`` フラグ自体が未実装のため、T106/T107 は
+       Typer の unknown option エラーになる。WP-2 完了後に green 化する。
+    """
+    app = _get_app()
+    runner = CliRunner()
+    args = ["translate", str(input_xml)]
+    if output is not None:
+        args += ["-o", str(output)]
+    if extra_args:
+        args += extra_args
+    return runner.invoke(app, args)
+
+
+# ---------------------------------------------------------------------------
+# T103: iroiro.toml 無し cwd + フラグ無し → 内蔵デフォルト使用（v0.1 互換）
+# ---------------------------------------------------------------------------
+
+def test_T103_no_toml_no_flags_uses_builtin_defaults(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_api_config: list[object],
+) -> None:
+    """T103: iroiro.toml 無し cwd + フラグ無し → 内蔵デフォルト使用（v0.1 互換）。
+
+    後方互換性の回帰保証。toml が存在せず CLI フラグも省略した場合は、
+    ``iroiro/cli.py`` の ``DEFAULT_*`` 定数がそのまま使われる。
+    （Plan §4.4 の最弱優先順位・v0.1 と同じ挙動）
+    """
+    import shutil
+
+    from iroiro.cli import (
+        DEFAULT_API_BASE,
+        DEFAULT_API_KEY,
+        DEFAULT_CONCURRENCY,
+        DEFAULT_MAX_CHARS,
+        DEFAULT_MODEL,
+        DEFAULT_TIMEOUT,
+    )
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    monkeypatch.chdir(tmp_path)  # cwd は空（iroiro.toml 無し）
+
+    output = tmp_path / "out_t103.xml"
+    result = _run_translate_with_config(tmp_input, output=output)
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+    assert len(capture_api_config) == 1, "Translator が1回構築された"
+    cfg = capture_api_config[0]
+    assert cfg.base_url == DEFAULT_API_BASE, (
+        f"api_base は内蔵デフォルト: 実際 {cfg.base_url!r}"
+    )
+    assert cfg.api_key == DEFAULT_API_KEY
+    assert cfg.model == DEFAULT_MODEL
+    assert cfg.timeout == DEFAULT_TIMEOUT
+    assert cfg.concurrency == DEFAULT_CONCURRENCY
+    assert cfg.max_chars == DEFAULT_MAX_CHARS
+
+
+# ---------------------------------------------------------------------------
+# T104: iroiro.toml 有り + フラグ無し → toml 値が反映される
+# ---------------------------------------------------------------------------
+
+def test_T104_toml_applied_when_no_flags(
+    tiny_xml: Path,
+    tmp_path: Path,
+    fixtures_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_api_config: list[object],
+) -> None:
+    """T104: iroiro.toml 有り + フラグ無し → toml 値が RunConfig に反映される。
+
+    cwd に ``iroiro.toml``（全項目・DEFAULT_* と明確に異なる値）を置き、
+    フラグを1つも指定しない場合、toml の値が ApiConfig に反映される
+    （DEFAULT_* ではなく toml の値が使われる）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    shutil.copy(fixtures_dir / "iroiro_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    output = tmp_path / "out_t104.xml"
+    result = _run_translate_with_config(tmp_input, output=output)
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+    assert len(capture_api_config) == 1, "Translator が1回構築された"
+    cfg = capture_api_config[0]
+    assert cfg.base_url == "http://from-toml:9999/v1", (
+        f"api_base は toml の値: 実際 {cfg.base_url!r}"
+    )
+    assert cfg.api_key == "toml-secret-key"
+    assert cfg.model == "toml-model-name"
+    assert cfg.timeout == 99.0
+    assert cfg.concurrency == 7
+    assert cfg.max_chars == 7777
+
+
+# ---------------------------------------------------------------------------
+# T105: iroiro.toml 有り + --api-base X 明示 → フラグが優先
+# ---------------------------------------------------------------------------
+
+def test_T105_cli_flag_overrides_toml(
+    tiny_xml: Path,
+    tmp_path: Path,
+    fixtures_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_api_config: list[object],
+) -> None:
+    """T105: iroiro.toml 有り + ``--api-base X`` 明示 → フラグが優先する。
+
+    toml の ``api_base`` は ``"http://from-toml:9999/v1"`` だが、
+    CLI ``--api-base`` で明示指定した値が優先される（Plan §4.4 最強優先順位）。
+    他の項目は toml のまま（フラグで上書きしていないため）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    shutil.copy(fixtures_dir / "iroiro_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    output = tmp_path / "out_t105.xml"
+    result = _run_translate_with_config(
+        tmp_input,
+        output=output,
+        extra_args=["--api-base", "http://from-cli/v1"],
+    )
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+    cfg = capture_api_config[0]
+    assert cfg.base_url == "http://from-cli/v1", (
+        f"CLI フラグが toml より優先: 実際 {cfg.base_url!r}"
+    )
+    # フラグで上書きしていない項目は toml のまま
+    assert cfg.model == "toml-model-name"
+    assert cfg.max_chars == 7777
+    assert cfg.api_key == "toml-secret-key"
+
+
+# ---------------------------------------------------------------------------
+# T106: --config custom.toml → 指定パスが読まれる
+# ---------------------------------------------------------------------------
+
+def test_T106_config_flag_reads_custom_path(
+    tiny_xml: Path,
+    tmp_path: Path,
+    fixtures_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_api_config: list[object],
+) -> None:
+    """T106: ``--config custom.toml`` → 指定パスが読まれる。
+
+    cwd に ``iroiro.toml``（partial・別内容）と ``custom.toml``（full）を配置し、
+    ``--config custom.toml`` で full の値が反映されることを確認する。
+    これにより「cwd の iroiro.toml は無視され、--config のパスが優先される」
+    ことを検証する（Plan §4.3 検索順位1）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    # cwd の iroiro.toml は partial（api_base="http://partial:8080/v1"）
+    shutil.copy(fixtures_dir / "iroiro_partial.toml", tmp_path / "iroiro.toml")
+    # custom.toml は full（api_base="http://from-toml:9999/v1"）
+    shutil.copy(fixtures_dir / "iroiro_full.toml", tmp_path / "custom.toml")
+    monkeypatch.chdir(tmp_path)
+
+    output = tmp_path / "out_t106.xml"
+    result = _run_translate_with_config(
+        tmp_input,
+        output=output,
+        extra_args=["--config", str(tmp_path / "custom.toml")],
+    )
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+    cfg = capture_api_config[0]
+    # custom.toml（full）の値が反映される（cwd の iroiro.toml は無視）
+    assert cfg.base_url == "http://from-toml:9999/v1", (
+        f"--config で指定したファイルが読まれる: 実際 {cfg.base_url!r}"
+    )
+    assert cfg.model == "toml-model-name"
+    assert cfg.concurrency == 7
+    assert cfg.max_chars == 7777
+
+
+# ---------------------------------------------------------------------------
+# T107: --config missing.toml → exit code 2
+# ---------------------------------------------------------------------------
+
+def test_T107_config_missing_file_exit_code_2(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T107: ``--config missing.toml`` → exit code 2。
+
+    存在しないファイルを ``--config`` で明示指定した場合、``IroiroError`` を
+    catch して exit code 2 で停止する（Plan §4.5.2）。
+
+    ※ ``--config`` 無指定時の cwd の iroiro.toml が存在しない場合は
+       何もしない（後方互換）が、``--config`` で明示した場合はエラーになる。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    monkeypatch.chdir(tmp_path)
+
+    missing = tmp_path / "missing.toml"
+    assert not missing.exists()
+
+    output = tmp_path / "out_t107.xml"
+    result = _run_translate_with_config(
+        tmp_input,
+        output=output,
+        extra_args=["--config", str(missing)],
+    )
+
+    assert result.exit_code == 2, (
+        f"存在しない --config で exit code 2: 実際 {result.exit_code}\n"
+        f"output: {result.output}"
+    )
+    # 出力ファイルは生成されない
+    assert not output.exists(), "エラー時は出力ファイルを生成しない"
+
+
+# ---------------------------------------------------------------------------
+# T108: toml max_chars=4000 + CLI --max-chars 0 → CLI の 0 が勝つ
+# ---------------------------------------------------------------------------
+
+def test_T108_cli_max_chars_zero_overrides_toml(
+    tiny_xml: Path,
+    tmp_path: Path,
+    fixtures_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_api_config: list[object],
+) -> None:
+    """T108: toml max_chars + CLI ``--max-chars 0`` → CLI の 0 が勝つ。
+
+    Plan §4.4 の ``is None`` 判定の検証。CLI で明示的に 0 を渡した場合、
+    falsy 扱いされずに 0 が採用される（toml の 7777 でなく 0）。
+    ``or`` 演算子を使うと 0 は falsy なので toml の 7777 に埋もれてしまうが、
+    ``is None`` 判定なら 0 が正しく採用される。
+
+    ※ max_chars=0 は「全件スキップ」の正当値（§4.5.1）。本テストでは
+       ApiConfig の max_chars フィールドの値だけを検証し、スキップ挙動は
+       別テスト（test_config.py T102 等）で担保する。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    shutil.copy(fixtures_dir / "iroiro_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    output = tmp_path / "out_t108.xml"
+    result = _run_translate_with_config(
+        tmp_input,
+        output=output,
+        extra_args=["--max-chars", "0"],
+    )
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+    cfg = capture_api_config[0]
+    assert cfg.max_chars == 0, (
+        f"CLI の 0 が toml の 7777 を上書き（falsy で埋もれない）: "
+        f"実際 {cfg.max_chars!r}"
+    )
+    # フラグで上書きしていない項目は toml のまま
+    assert cfg.base_url == "http://from-toml:9999/v1"
+
+
+# ---------------------------------------------------------------------------
+# T109: toml api_key="secret" + CLI --api-key "" → CLI の空文字が勝つ
+# ---------------------------------------------------------------------------
+
+def test_T109_cli_empty_api_key_overrides_toml(
+    tiny_xml: Path,
+    tmp_path: Path,
+    fixtures_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capture_api_config: list[object],
+) -> None:
+    """T109: toml api_key + CLI ``--api-key ""`` → CLI の空文字が勝つ。
+
+    Plan §4.4 の ``is None`` 判定の検証。CLI で明示的に空文字を渡した場合、
+    falsy 扱いされずに空文字が採用される（toml の "toml-secret-key" でなく ""）。
+    ``or`` 演算子を使うと "" は falsy なので toml の値に埋もれてしまうが、
+    ``is None`` 判定なら空文字が正しく採用される。
+
+    ※ ``--api-key ""`` をシェルから渡す場合は ``""`` でクォート必須。
+       CliRunner では argv に直接空文字を渡すのでクォート不要。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    shutil.copy(fixtures_dir / "iroiro_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    output = tmp_path / "out_t109.xml"
+    result = _run_translate_with_config(
+        tmp_input,
+        output=output,
+        extra_args=["--api-key", ""],
+    )
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+    cfg = capture_api_config[0]
+    assert cfg.api_key == "", (
+        f"CLI の空文字が toml の secret を上書き（falsy で埋もれない）: "
+        f"実際 {cfg.api_key!r}"
+    )
+    # フラグで上書きしていない項目は toml のまま
+    assert cfg.base_url == "http://from-toml:9999/v1"

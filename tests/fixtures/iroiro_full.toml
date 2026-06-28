@@ -1,0 +1,17 @@
+# iroiro_full.toml — 全項目記述の iroiro.toml（T89 / T104 / T105 / T108 / T109 用）
+#
+# 検証容易性のため、全ての値を iroiro/cli.py の DEFAULT_* と明確に異なる値にする:
+#   DEFAULT_API_BASE    = "http://localhost:8081/v1"
+#   DEFAULT_API_KEY     = "iroiro"
+#   DEFAULT_MODEL       = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+#   DEFAULT_CONCURRENCY = 1
+#   DEFAULT_MAX_CHARS   = 4000
+#   DEFAULT_TIMEOUT     = 120.0
+
+[iroiro]
+api_base    = "http://from-toml:9999/v1"
+api_key     = "toml-secret-key"
+model       = "toml-model-name"
+timeout     = 99.0
+concurrency = 7
+max_chars   = 7777

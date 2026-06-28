@@ -1,0 +1,39 @@
+# iroiro-translator 設定ファイル（v0.3）
+#
+# 使い方:
+#   1. このファイルを `iroiro.toml` にコピー
+#      ```
+#      cp iroiro.toml.example iroiro.toml
+#      ```
+#   2. 下記のコメントを外して値を編集する
+#   3. `iroiro.toml` は .gitignore 対象（個人の環境依存情報だから commit しない）
+#
+# 優先順位:
+#     強 ← CLI フラグ（明示指定時） ＞ iroiro.toml ＞ 内蔵デフォルト → 弱
+#
+#   ※ `--max-chars 0` や `--api-key ""` のような「 falsy な明示値」も
+#      正しく CLI 指定として優先されます（`is None` 判定のため）。
+#
+# 検索位置:
+#   - `--config PATH` で明示指定時はそのファイルのみ読む
+#   - 未指定時はカレントディレクトリ（コマンドを実行したディレクトリ）の
+#     `iroiro.toml` を探す（親ディレクトリへの遡りはしない）
+#
+# ⚠️ セキュリティ注意:
+#   - API キーは CLI フラグ `--api-key` より `iroiro.toml` に書く方が安全
+#     （`--api-key` は shell history・`ps` 出力に残るため）。
+#     `iroiro.toml` は `.gitignore` 対象なので commit されませんが、
+#     **commit 事故・共有事故を防ぐため** `chmod 600 iroiro.toml` を推奨します。
+#   - `iroiro.toml.example`（本ファイル）には実キーを書かないこと
+#     （本ファイルは git 管理対象で commit されるため・ダミー値のままにする）。
+#   - 詳細は docs/usage.md「セキュリティ注意事項」節を参照。
+#
+# 詳細は docs/usage.md / docs/design.md を参照。
+
+[iroiro]
+# api_base    = "http://localhost:8081/v1"   # OpenAI 互換 API のベース URL（非空）
+# api_key     = "iroiro"                      # API キー（"" 許可・llama.cpp は検証しない）
+# model       = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"  # モデル名（非空）
+# timeout     = 120.0                         # 1リクエストの読み出しタイムアウト秒（> 0）
+# concurrency = 1                             # 同時リクエスト数（>= 1）
+# max_chars   = 4000                          # 1エントリの最大文字数（>= 0・0 は全件スキップ）

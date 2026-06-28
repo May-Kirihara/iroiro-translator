@@ -22,11 +22,13 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import typer
+from rich.markup import escape
 
 from iroiro import logging as iroiro_logging
-from iroiro.config import RunConfig
+from iroiro.config import RunConfig, load_config
 from iroiro.errors import IroiroError
 from iroiro.models import StringEntry
 from iroiro.progress import (
@@ -76,6 +78,25 @@ DEFAULT_MAX_CHARS = 4000
 DEFAULT_TIMEOUT = 120.0
 
 
+def _resolve[T](
+    cli_val: T | None,
+    file_cfg: dict[str, object],
+    key: str,
+    default: T,
+) -> T:
+    """CLI フラグ（非 None）＞ toml ＞ 内蔵デフォルト、で解決する（Plan 003 §4.4）。
+
+    ``or`` 演算子は ``0`` や ``""`` を falsy 扱いするため **使わない**
+    （``--max-chars 0`` / ``--api-key ""`` の明示指定を正しく扱うため・T108/T109）。
+    """
+    if cli_val is not None:
+        return cli_val
+    if key in file_cfg:
+        # ``load_config`` が型検証済みなのでキャスト安全
+        return cast(T, file_cfg[key])
+    return default
+
+
 @app.command()
 def translate(
     input: Path = typer.Argument(..., help="入力XMLファイルのパス"),
@@ -85,23 +106,55 @@ def translate(
         "--output",
         help="出力XMLファイルのパス。省略時は <input>.translated.xml",
     ),
-    api_base: str = typer.Option(
-        DEFAULT_API_BASE, "--api-base", help="OpenAI 互換 API のベース URL"
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        help=(
+            "iroiro.toml 設定ファイルのパス（未指定時は cwd の iroiro.toml を探す・"
+            "存在しなければ内蔵デフォルトを使用）"
+        ),
     ),
-    api_key: str = typer.Option(
-        DEFAULT_API_KEY, "--api-key", help="API キー（llama.cpp では検証されない）"
+    api_base: str | None = typer.Option(
+        None,
+        "--api-base",
+        help=(
+            "OpenAI 互換 API のベース URL（未指定時は iroiro.toml → 内蔵デフォルト"
+            "の順で解決）"
+        ),
     ),
-    model: str = typer.Option(DEFAULT_MODEL, "--model", help="モデル名"),
-    concurrency: int = typer.Option(
-        DEFAULT_CONCURRENCY, "--concurrency", help="同時リクエスト数"
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        help=(
+            "API キー（未指定時は iroiro.toml → 内蔵デフォルトの順で解決・"
+            "llama.cpp では検証されない）"
+        ),
     ),
-    max_chars: int = typer.Option(
-        DEFAULT_MAX_CHARS,
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="モデル名（未指定時は iroiro.toml → 内蔵デフォルトの順で解決）",
+    ),
+    concurrency: int | None = typer.Option(
+        None,
+        "--concurrency",
+        help="同時リクエスト数（未指定時は iroiro.toml → 内蔵デフォルトの順で解決）",
+    ),
+    max_chars: int | None = typer.Option(
+        None,
         "--max-chars",
-        help="1エントリの最大文字数。超過時はスキップ（分割は v0.2機能）",
+        help=(
+            "1エントリの最大文字数。超過時はスキップ（未指定時は iroiro.toml → "
+            "内蔵デフォルトの順で解決）"
+        ),
     ),
-    timeout: float = typer.Option(
-        DEFAULT_TIMEOUT, "--timeout", help="1リクエストの読み出しタイムアウト（秒）"
+    timeout: float | None = typer.Option(
+        None,
+        "--timeout",
+        help=(
+            "1リクエストの読み出しタイムアウト（秒）（未指定時は iroiro.toml → "
+            "内蔵デフォルトの順で解決）"
+        ),
     ),
     resume: bool = typer.Option(
         False, "--resume", help="progress.json があれば再開"
@@ -125,17 +178,37 @@ def translate(
     iroiro_logging.configure_logging(verbose)
 
     if not input.exists():
-        iroiro_logging.print(f"[red]Error:[/red] input file not found: {input}")
+        # ``{input}`` を escape する: rich.Console.print は ``[...]`` をマークアップタグとして
+        # 解釈・削除するため、パスに ``[`` が含まれる場合の崩れを防ぐ（N1）。
+        iroiro_logging.print(
+            f"[red]Error:[/red] input file not found: {escape(str(input))}"
+        )
         raise typer.Exit(code=2)
 
     output_path = output if output is not None else _default_output_path(input)
+
+    # iroiro.toml 読込（Plan 003 §4）:
+    # - ``--config`` 明示時: 指定ファイルのみ読む（存在しない → IroiroError → exit 2）
+    # - 未指定時: cwd の iroiro.toml を探す（存在しなければ空 dict・後方互換）
+    # - パース/型/値域エラーは IroiroError → exit 2
+    try:
+        file_cfg = load_config(config)
+    except IroiroError as e:
+        # ``{e}`` を escape する: エラーメッセージ内の ``[iroiro]`` 等が rich マークアップ
+        # タグと解釈されて消失するのを防ぐ（N1）。
+        iroiro_logging.print(f"[red]Error:[/red] {escape(str(e))}")
+        raise typer.Exit(code=2) from e
+
+    # 優先順位（Plan 003 §4.4）: CLI フラグ（非 None）＞ iroiro.toml ＞ 内蔵デフォルト
     api_cfg = ApiConfig(
-        base_url=api_base,
-        api_key=api_key,
-        model=model,
-        timeout=timeout,
-        concurrency=concurrency,
-        max_chars=max_chars,
+        base_url=_resolve(api_base, file_cfg, "api_base", DEFAULT_API_BASE),
+        api_key=_resolve(api_key, file_cfg, "api_key", DEFAULT_API_KEY),
+        model=_resolve(model, file_cfg, "model", DEFAULT_MODEL),
+        timeout=_resolve(timeout, file_cfg, "timeout", DEFAULT_TIMEOUT),
+        concurrency=_resolve(
+            concurrency, file_cfg, "concurrency", DEFAULT_CONCURRENCY
+        ),
+        max_chars=_resolve(max_chars, file_cfg, "max_chars", DEFAULT_MAX_CHARS),
     )
     # skip_records 構築（Plan §5.2）:
     # - デフォルト: DEFAULT_SKIP_RECORDS（12件）+ --skip-records の追加要素
@@ -202,7 +275,8 @@ async def _run(cfg: RunConfig) -> None:
         try:
             existing = writer.load_existing()
         except ValueError as e:
-            iroiro_logging.print(f"[red]Error:[/red] {e}")
+            # ``{e}`` を escape する（N1・他の Error: print と統一）。
+            iroiro_logging.print(f"[red]Error:[/red] {escape(str(e))}")
             raise typer.Exit(code=2) from e
         if existing is not None:
             iroiro_logging.info(

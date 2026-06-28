@@ -23,6 +23,7 @@ Skyrim MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods
 - **プレースホルダ保護** — `<alias=NAME>`, `<br>`, `%{...}`, `\n`, `\r`, `#` 等の出現回数を検証
 - **失敗時の `<Dest>` 保護** — 翻訳失敗・スキップ時は元の `<Dest>` を保持し、`<Source>` で上書きしない
 - **翻訳スキップ REC 型**（v0.2）— 内部管理用レコード（`HDPT:FULL` 等12件）を自動スキップ。`--no-skip-default-records` / `--skip-records` で制御。詳細は [docs/usage.md](docs/usage.md)
+- **設定ファイル**（v0.3）— 繰り返し使う設定（LLM エンドポイント・API キー・モデル名・タイムアウト等）を `iroiro.toml` に書いておけます。`.gitignore` 対象・環境依存情報をプロジェクトに混入させない。詳細は [docs/usage.md](docs/usage.md)
 - **再開機能**（`--resume`） — 進捗ファイルから続きを実行
 - **dry-run モード**（`--dry-run`） — LLM を呼ばず処理件数のみ表示
 - **並列実行**（`--concurrency`） と **HTTP タイムアウト設定**（`--timeout`）
@@ -89,6 +90,18 @@ INFO  Parsed 679 <String> entries (BOM=True, newline='\r\n', encoding=UTF-8)
 --dry-run: LLM を呼ばず終了します
 ```
 
+### 4. 設定を保存（任意）
+
+繰り返し使う設定（LLM エンドポイント・API キー・モデル名・タイムアウト等）は `iroiro.toml` に
+書いておけます。毎回 CLI フラグを打つ必要がなくなります。
+
+```bash
+cp iroiro.toml.example iroiro.toml   # 雛形をコピー
+# iroiro.toml を編集して値を設定（.gitignore 対象・commit しない）
+```
+
+詳細は [詳細な使い方](docs/usage.md) を参照。
+
 ---
 
 ## 基本的な使い方
@@ -116,8 +129,10 @@ CLI フラグ全一覧・設定例・トラブルシュートは [詳細な使�
 - [開発者向け](docs/development.md) — 開発環境・テスト・モジュール構成・ロードマップ
 - [実装計画 v0.1](docs/plans/001-initial.md) — v0.1 初期実装の設計判断・却下代替案の経緯
 - [実装計画 v0.2](docs/plans/002-skip-records.md) — v0.2 翻訳スキップ REC 型の設計判断
+- [実装計画 v0.3](docs/plans/003-config-file.md) — v0.3 設定ファイル（`iroiro.toml`）の設計判断
 - [引き継ぎ v0.1](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.2](docs/handoff/002-skip-records.md) — v0.2 完了時の引き継ぎメモ・検証結果
+- [引き継ぎ v0.3](docs/handoff/003-config-file.md) — v0.3 完了時の引き継ぎメモ・検証結果
 
 ---
 

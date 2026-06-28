@@ -1,0 +1,8 @@
+# iroiro_other_only.toml — [iroiro] セクション無し（T94 用）
+#
+# [other] セクションだけを含む。load_config は [iroiro] が無い場合 {} を返す
+# （警告も出さない）。T94 で「セクション無しは空 dict 扱い」を検証する。
+
+[other]
+some_key = "some_value"
+another  = 42

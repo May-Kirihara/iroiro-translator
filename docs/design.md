@@ -30,7 +30,7 @@ output.xml (bytes)
 | モジュール | 役割 |
 |---|---|
 | `iroiro/cli.py` | `typer` ベースの CLI エントリ。`translate` サブコマンド |
-| `iroiro/config.py` | `RunConfig` dataclass |
+| `iroiro/config.py` | `RunConfig` dataclass・`load_config`（`iroiro.toml` ローダー・v0.3） |
 | `iroiro/models.py` | `StringEntry`, `FileFormat` dataclass |
 | `iroiro/xml_io.py` | `parse_xml` / `serialize_xml`（BOM/CRLF/宣言保持） |
 | `iroiro/escape.py` | `extract_tokens` / `tokens_match`（プレースホルダ保護） |
@@ -274,6 +274,57 @@ REC skip と言語 skip が **重複カウントされない** よう、dry-run 
 v0.1 で作成された `progress.json`（fingerprint フィールド無し = `""`）は:
 - `--no-skip-default-records` 指定時（空 set = `""`）→ resume 成功
 - デフォルト動作（`DEFAULT_SKIP_RECORDS` = 非`""`）→ fingerprint 不一致で停止（安全側）
+
+---
+
+## 設定ファイル読込の設計（v0.3）
+
+v0.3 で `iroiro.toml` によるデフォルト値の外部化を追加した。設計判断と却下代替案の経緯は
+[実装計画 003 §4 / §14](plans/003-config-file.md) を参照。
+
+### なぜ `pyproject.toml [tool.iroiro]` でなく `iroiro.toml` 専用か
+
+LLM のエンドポイント・API キーは **環境依存の個人情報・ローカルネット情報** なので、プロジェクト共有
+ファイル（`pyproject.toml`）に混入させたくない。`.env` と同じ運用（雛形は管理・実体は `.gitignore`）
+とするため、専用ファイル `iroiro.toml` を採用した。
+
+### なぜ親ディレクトリ遡りをしないか
+
+git の `.git` 探索のような「親ディレクトリを遡って `iroiro.toml` を探す」動作は導入しない。
+**「知らぬ間に親ディレクトリの `iroiro.toml` が読まれる」** 混乱を避けるため（KISS）。探索は cwd
+直下のみ。将来必要になれば追加する。
+
+### なぜ `bool` を拒否するか
+
+Python では `bool` は `int` の部分型（`isinstance(True, int) == True`）。`timeout = true` のような
+書き間違いを数値として受け入れてしまう事故を防ぐため、数値フィールドでは **`isinstance(v, bool)`
+なら型エラーとして拒否** する。
+
+### なぜ `max_chars = 0` を正当値にしたか
+
+`0` は「全件スキップ」の意味で実用上必要（一時的に翻訳を止めたい等）。`len(source) > 0` が常に真の
+ため、`max_chars = 0` は全エントリをスキップ判定にする。`>= 0` を正当値とし、`-1` 等の負数のみ拒否。
+
+### なぜ `is None` 判定か（`or` 演算子でない）
+
+優先順位マージで `or` 演算子を使うと、`0` や `""` を falsy 扱いして **埋もれてしまう**:
+
+- `--max-chars 0`（明示的に 0 = 全件スキップを指定）が `iroiro.toml` の値で上書きされる
+- `--api-key ""`（明示的に空文字を指定）が `iroiro.toml` の値で上書きされる
+
+これらを正しく扱うため、**`is None` チェック** で「明示的に渡されたか」を判定する（`cli.py` の
+`_resolve()` helper）。Typer の `Optional[type] = None` パターンと組み合わせることで、フラグ省略時は
+`None`・明示時は値（`0` や `""` 含む）が渡る。
+
+### 単一 `[iroiro]` テーブルの理由
+
+6項目は1テーブルで十分であり、サブテーブル分割（`[iroiro.api]` / `[iroiro.translation]` 等）は
+過剰。将来項目が増えて構成し直しが必要になれば再編する（v0.3 では必要なし）。
+
+### 未知キーは警告して続行
+
+`[iroiro]` に未知のキーがあっても **例外送出せず警告ログのみ** で続行する（既知キーは反映）。
+前方互換（将来バージョンのキーが混ざっても停止しない）のため。
 
 ---
 

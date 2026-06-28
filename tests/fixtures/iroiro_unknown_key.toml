@@ -1,0 +1,9 @@
+# iroiro_unknown_key.toml — 未知キー + 既知キー混在（T98 用）
+#
+# 未知キー（unknown_key / another_unknown）は警告ログに出るが例外送出しない。
+# 既知キー（api_base）は返り値 dict に含まれる。T98 で両方を検証する。
+
+[iroiro]
+api_base       = "http://known:8080/v1"
+unknown_key    = "this should be ignored with a warning"
+another_unknown = 12345

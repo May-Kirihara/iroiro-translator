@@ -16,6 +16,7 @@ iroiro translate INPUT.xml [OPTIONS]
 |---|---|---|---|
 | `INPUT`（引数） | PATH（必須） | — | 入力 XML ファイルのパス |
 | `-o`, `--output` | PATH | `<input>.translated.xml` | 出力 XML ファイルのパス |
+| `--config` | PATH | なし | `iroiro.toml` 設定ファイルのパス（未指定時は cwd の `iroiro.toml` を探す）（v0.3） |
 | `--api-base` | TEXT | `http://localhost:8081/v1` | OpenAI 互換 API のベース URL（llama.cpp server） |
 | `--api-key` | TEXT | `iroiro` | API キー（llama.cpp では検証されない。`Authorization: Bearer` ヘッダとしては送信する） |
 | `--model` | TEXT | `ggml-org/gemma-4-12B-it-GGUF:Q4_K_M` | モデル名 |
@@ -32,6 +33,119 @@ iroiro translate INPUT.xml [OPTIONS]
 > **既定値の根拠**: ローカル LLM（llama.cpp server / Gemma 4 12B）を前提に調整している。
 > `--api-key` は llama.cpp の OpenAI 互換サーバーでは検証されないが、HTTP ヘッダとしては送信されるため
 > 任意の非空文字列を指定する（既定の `iroiro` はダミー）。
+
+> **解決順序（v0.3）**: `--api-base` / `--api-key` / `--model` / `--concurrency` /
+> `--max-chars` / `--timeout` の6フラグは、**CLI フラグ（明示指定時）＞ `iroiro.toml` ＞ 内蔵デフォルト**
+> （上表の値）の順で解決されます。各フラグを省略したとき `iroiro.toml` の値が使われます。
+> 詳細は下記の「設定ファイル（v0.3）」節を参照。
+
+---
+
+## 設定ファイル（v0.3）
+
+CLI フラグを毎回打つ代わりに、`iroiro.toml` に LLM エンドポイント・API キー・モデル名・
+タイムアウト・並列数・`max_chars` のデフォルト値を書いておけます。LLM サーバーを頻繁に切り替える
+利用者（llama.cpp / LM Studio / Ollama 等）の負担を減らすための機能です。
+
+> v0.3 は後方互換です。`iroiro.toml` を置かなければ v0.2.1 以前と同じ挙動（CLI フラグ ＞ 内蔵
+> デフォルト）のまま動きます。
+
+### 書き方
+
+TOML 形式・単一の `[iroiro]` テーブルに `snake_case`（小文字＋アンダースコア）でキーを書きます。
+**全項目省略可能** で、書かなかった項目は内蔵デフォルトに落ちます。
+
+```toml
+[iroiro]
+api_base    = "http://localhost:8081/v1"
+api_key     = "iroiro"
+model       = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+timeout     = 120.0
+concurrency = 1
+max_chars   = 4000
+```
+
+### 優先順位
+
+```
+強 ← CLI フラグ（明示指定時）  ＞  iroiro.toml  ＞  内蔵デフォルト  → 弱
+```
+
+- CLI フラグを明示した値が **最優先** です。
+- フラグ省略時は `iroiro.toml` の値が使われます。
+- 両方とも無い項目は内蔵デフォルト（CLI フラグ一覧表の値）に落ちます。
+
+> **falsy な明示値の扱い**: `--max-chars 0` や `--api-key ""` のような「偽になりがちな明示値」も、
+> 正しく CLI 指定として優先されます（内部で `is None` 判定を使うため）。`iroiro.toml` の値で
+> 上書きされる心配はありません。
+
+### 検索位置
+
+- **`--config PATH` で明示指定時**: そのファイル **のみ** 読みます。存在しない場合は即時エラー
+  （exit code 2）。
+- **`--config` 無指定時**: コマンドを実行したディレクトリ（cwd）の `iroiro.toml` を探します。
+  存在すれば読み、存在しなければ何もしません（後方互換・警告も出ません）。
+- **親ディレクトリへの遡りはしません**（git の `.git` 探索のような動作は v0.3 では未対応）。
+
+> ※ `iroiro.toml` を「入力 XML と同じディレクトリ」に置く誤解が多いですが、探索されるのは
+> **コマンドを実行したディレクトリ（cwd）** です。
+
+### 導入手順
+
+雛形 `iroiro.toml.example` を `iroiro.toml` にコピーし、値を編集します。
+
+```bash
+cp iroiro.toml.example iroiro.toml
+# エディタで iroiro.toml を開き、コメントを外して値を編集する
+```
+
+`iroiro.toml` は `.gitignore` 対象（個人の環境依存情報のため commit しない）。
+`iroiro.toml.example` の方は git 管理対象（ダミー値のみ・実キーは書かない）。
+
+### 各項目の意味
+
+| キー | 型 | 値域 | 意味 |
+|---|---|---|---|
+| `api_base` | 文字列 | 非空 | OpenAI 互換 API のベース URL（例: `http://localhost:8081/v1`） |
+| `api_key` | 文字列 | `""` 許可 | API キー。llama.cpp は検証しないので空でも動く（OpenAI 互換サーバーでは認証失敗する場合あり） |
+| `model` | 文字列 | 非空 | OpenAI クライアントに渡すモデル名 |
+| `timeout` | 数値 | `> 0` | 1リクエストの読み出しタイムアウト（秒）。整数（`120`）も可・内部的に浮動小数点に正規化 |
+| `concurrency` | 整数 | `>= 1` | 同時リクエスト数 |
+| `max_chars` | 整数 | `>= 0` | 1エントリの最大文字数。超過時はスキップ。**`0` は正当値（= 全件スキップ）** なので注意 |
+
+> **`max_chars = 0` に注意**: `0` は「全エントリをスキップ」の意味になります（`len(source) > 0` が
+> 常に真のため）。意図せず全件スキップにならないよう、基本的には `1` 以上を指定してください。
+
+> **`bool` は拒否**: `timeout = true` のような書き間違いはエラーになります（Python で `bool` が
+> `int` の部分型である事故を防ぐため）。数値項目には必ず数値を指定してください。
+
+### 未知のキーの扱い
+
+`[iroiro]` に未知のキー（将来バージョン用等）があっても **警告ログを出して続行** します
+（前方互換のため）。既知のキーは通常どおり反映されます。
+
+### セキュリティ注意事項
+
+- **API キーは `iroiro.toml` に書く方が安全**: CLI フラグ `--api-key XXX` は shell history・
+  `ps` 出力・`HISTFILE` に残ります。本番環境では `iroiro.toml`（`.gitignore` 対象）を使ってください。
+- **`chmod 600 iroiro.toml` を推奨**: 共有サーバーで他ユーザーに読まれないようにするため。
+- **`iroiro.toml.example` に実キーを書かない**: 雛形はダミー値のまま commit してください
+  （`.gitignore` 対象でなく commit されるファイルのため）。
+- **共有環境では `--api-key` を使わない**: シェル履歴から漏洩するリスクがあります。
+
+### エラーメッセージ例
+
+設定ファイルの問題は全て `Error:` 付きで表示され、exit code 2 で停止します。
+
+| 状況 | メッセージ例 |
+|---|---|
+| `--config PATH` が存在しない | `Error: config file not found: PATH` |
+| TOML のシンタックスエラー | `Error: invalid TOML in iroiro.toml: <詳細>` |
+| `[iroiro]` がテーブルでない | `Error: [iroiro] must be a table, got <型> in <パス>` |
+| 型不一致（`timeout = "abc"` 等） | `Error: <キー> must be <期待型>, got <実際型> in <パス>` |
+| 値域エラー（`timeout = -1` 等） | `Error: <キー> must be > 0, got <値> in <パス>` |
+
+> cwd に `iroiro.toml` が存在しない場合は **エラーにならず** 何も出力しません（後方互換）。
 
 ---
 

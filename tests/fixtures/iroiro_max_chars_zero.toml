@@ -1,0 +1,8 @@
+# iroiro_max_chars_zero.toml — max_chars = 0（T102 用）
+#
+# max_chars = 0 は「全件スキップ」を意味する正当値（§4.5.1）。
+# load_config は 0 を受理し、返り値 dict に max_chars = 0 として含める。
+# `>= 0` の境界値検証。
+
+[iroiro]
+max_chars = 0

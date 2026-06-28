@@ -1,0 +1,8 @@
+# iroiro_broken.toml — 無効 TOML（T93 用）
+#
+# シンタックスエラー: キー = 値 の形式を満たさない行を含む。
+# tomllib.loads は TOMLDecodeError を送出する。load_config はこれを IroiroError に
+# ラップして投げることを想定。
+
+[iroiro]
+this is not valid toml = = =

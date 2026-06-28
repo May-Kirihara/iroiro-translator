@@ -1,0 +1,7 @@
+# iroiro_empty_base.toml — api_base が空文字（T101 用）
+#
+# api_base は非空を要求する（§4.5.1）。空文字 "" は値域エラーで IroiroError。
+# ※ api_key の空文字は許可されるが、api_base / model の空文字は拒否される点に注意。
+
+[iroiro]
+api_base = ""

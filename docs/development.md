@@ -30,7 +30,7 @@ uv sync           # dev extras（pytest / ruff / mypy）を含めて依存関係
 ### テスト全実行
 
 ```bash
-uv run pytest                          # 109 テスト（v0.1: 73 + v0.2: 36）
+uv run pytest                          # 144 テスト（v0.3 で test_config.py 15件 + test_cli.py 7件を追加）
 uv run pytest -k "xml_io"              # 個別実行（キーワード指定）
 uv run pytest --tb=no -q               # 簡易出力
 ```
@@ -57,7 +57,7 @@ iroiro/
 ├── __init__.py        # パッケージ初期化・__version__
 ├── __main__.py        # python -m iroiro エントリポイント
 ├── cli.py             # typer ベースの CLI。translate サブコマンド
-├── config.py          # RunConfig dataclass
+├── config.py          # RunConfig dataclass / load_config（iroiro.toml ローダー・v0.3）
 ├── errors.py          # IroiroError 共通例外
 ├── escape.py          # プレースホルダ検出（extract_tokens）/ 整合性検証（tokens_match）
 ├── logging.py         # rich ベースの進捗表示ヘルパ
@@ -92,7 +92,8 @@ iroiro/
 | `tests/test_escape.py` | プレースホルダ検出・整合性検証（T11-T18, T45） |
 | `tests/test_progress.py` | 並行安全な progress.json 読み書き（T19-T25, T46, T50, T77-T80, T83） |
 | `tests/test_translator.py` | 翻訳エンジン・post-processing・リトライ（T26-T34, T41-T44, T51, T56-T63, T71-T76, T81/T81b, T85-T87b） |
-| `tests/test_cli.py` | E2E（T36-T40, T64-T67, T69-T70, T82）。`CliRunner` 経由で `translate` サブコマンドを検証 |
+| `tests/test_config.py` | `iroiro.toml` ローダー `load_config`（T88-T102・v0.3）。パス解決・型/値域検証・bool 拒否・未知キー警告 |
+| `tests/test_cli.py` | E2E（T36-T40, T64-T67, T69-T70, T82, T103-T109）。`CliRunner` 経由で `translate` サブコマンドを検証 |
 
 ### 2. フィクスチャ（`tests/fixtures/`）
 
@@ -104,6 +105,7 @@ XML I/O の検証用に小さなサンプル XML を同梱（実データ由来�
 - `long_source.xml` — `max-chars` 超過
 - `with_comment.xml` / `with_cdata.xml` — コメント・CDATA 検出用
 - `skip_records.xml` — HDPT/WEAP/MGEF/RACE/BPTD/ACTI/空/日本語 の8エントリを含むテスト用 XML（BOM + CRLF + `standalone="yes"`）
+- `iroiro_*.toml` — `load_config` 検証用の TOML フィクスチャ（v0.3）。`iroiro_full` / `iroiro_partial` / `iroiro_broken` / `iroiro_not_table` / `iroiro_other_only` / `iroiro_unknown_key` / `iroiro_empty_base` / `iroiro_max_chars_zero` の8種
 
 ### 3. E2E（実 LLM）
 
@@ -161,9 +163,15 @@ v0.1 は英→日バッチ翻訳の安定版。以降は以下を予定（PR 歓
 
 - **翻訳スキップ REC 型** — `DEFAULT_SKIP_RECORDS`（12件）+ `--no-skip-default-records` / `--skip-records` CLI フラグ。詳細は [docs/plans/002-skip-records.md](plans/002-skip-records.md) と [docs/handoff/002-skip-records.md](handoff/002-skip-records.md)。
 
-### v0.3 以降（予定）
+### v0.3（✅ 完了）
+
+- **設定ファイル（`iroiro.toml`）** — LLM エンドポイント・API キー・モデル名・タイムアウト・並列数・`max_chars` のデフォルト値を `iroiro.toml` に外部化。`--config PATH` フラグ・cwd 自動検出。詳細は [docs/plans/003-config-file.md](plans/003-config-file.md) と [docs/handoff/003-config-file.md](handoff/003-config-file.md)。
+
+### v0.4 以降（予定）
 
 - 用語集機能（JSON/YAML形式・人間メンテ可能）
 - 長文 BOOK の自動分割
 - 実 LLM での品質レビュー用 diff 出力
 - SSTXMLRessources v3 / Interface/*.txt 対応
+- `skip_records` / `reject_phrases` の `iroiro.toml` 化
+- `iroiro.toml` の親ディレクトリ遡り探索

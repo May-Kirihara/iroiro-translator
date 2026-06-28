@@ -222,5 +222,9 @@ __marimo__/
 *.iroiro-progress.json
 *.iroiro-progress.json.tmp
 
+# iroiro-translator 設定ファイル（個人の環境依存情報・commit しない）
+# iroiro.toml.example は git 管理対象（雛形・ダミー値のみ）
+iroiro.toml
+
 # サンプル XML（第三者著作物のため git 管理外）
 sample/

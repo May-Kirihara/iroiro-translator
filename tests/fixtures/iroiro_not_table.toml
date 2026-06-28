@@ -1,0 +1,6 @@
+# iroiro_not_table.toml — [iroiro] がテーブルでない（T95 用）
+#
+# `iroiro = "not-a-table"` はスカラー文字列。[iroiro] テーブルではない。
+# load_config は [iroiro] がテーブルでない場合 IroiroError を送出することを想定。
+
+iroiro = "not-a-table"
