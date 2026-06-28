@@ -833,3 +833,219 @@ def test_T81d_default_skip_records_fingerprint_stable() -> None:
     assert compute_skip_records_fingerprint(DEFAULT_SKIP_RECORDS) == expected
     # 64文字の hex
     assert len(expected) == 64
+
+
+# ===========================================================================
+# v0.2.1: T85-T87b — 空文字列チェック（ルール6）・メタ返答チェック（ルール7）
+#
+# Plan §5.7.4-6/7: post-processing 後が空文字列、または LLM が「指示を受けた応答」
+# （了解しました／翻訳します／以下の通りです 等）を返した場合は IroiroError を raise し、
+# 呼出側で state=failed, new_dest=original_dest にする（トークン不一致と同じ経路）。
+#
+# ※ 「分かりました」「はい」等の NPC セリフとして自然な言葉は除外されている（T87/T87b）。
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_T85_empty_response_raises_iroiro_error() -> None:
+    """T85 (v0.2.1): LLM が空文字列を返した場合、IroiroError が raise される。
+
+    Plan §5.7.4-6: post-processing 後が空文字列なら IroiroError。
+    リトライは HTTP レベルのみ（content 検証はその後）なので即座に raise →
+    CLI 側で state=failed, new_dest=original_dest になる。
+    """
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response(""))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        # translate_entry 単体では IroiroError が上がる
+        with pytest.raises(IroiroError):
+            await translator.translate_entry("Fireball", "MGEF:FULL")
+
+        # CLI ライク処理で state/new_dest を検証
+        entry = StringEntry(
+            index=0,
+            edid="T85",
+            rec="MGEF:FULL",
+            source="Fireball",
+            original_dest="Fireball",
+            new_dest=None,
+            state="pending",
+        )
+        entry = await _cli_like_process(translator, entry)
+        assert entry.state == "failed"
+        assert entry.new_dest == entry.original_dest, "original_dest を保持"
+    finally:
+        await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T85b_whitespace_only_response_raises_iroiro_error() -> None:
+    """T85 補足 (v0.2.1): 空白のみの応答も post-processing 後に空文字列 → IroiroError。
+
+    Plan §5.7.4-6: 「空文字列（または空白のみ）」が対象。
+    """
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response("   \n\t "))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        with pytest.raises(IroiroError):
+            await translator.translate_entry("Fireball", "MGEF:FULL")
+    finally:
+        await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T86_meta_response_ryoukai_raises() -> None:
+    """T86 (v0.2.1): 「了解しました」は REJECT_PHRASES に含まれる → IroiroError。
+
+    指示受け取り系のメタ返答。NPC セリフとしては不自然。
+    """
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response("了解しました"))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        with pytest.raises(IroiroError):
+            await translator.translate_entry("Fireball", "MGEF:FULL")
+
+        # CLI ライク処理で state=failed, new_dest=original_dest を検証
+        entry = StringEntry(
+            index=0,
+            edid="T86",
+            rec="MGEF:FULL",
+            source="Fireball",
+            original_dest="Fireball",
+            new_dest=None,
+            state="pending",
+        )
+        entry = await _cli_like_process(translator, entry)
+        assert entry.state == "failed"
+        assert entry.new_dest == entry.original_dest, "source で上書きしない"
+    finally:
+        await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T86b_meta_response_honyaku_raises() -> None:
+    """T86b (v0.2.1): 「翻訳します」は作業宣言 → IroiroError。"""
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response("翻訳します"))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        with pytest.raises(IroiroError):
+            await translator.translate_entry("Fireball", "MGEF:FULL")
+    finally:
+        await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T86c_meta_response_ika_raises() -> None:
+    """T86c (v0.2.1): 「以下の通りです」は案内定型句 → IroiroError（完全一致）。"""
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response("以下の通りです"))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        with pytest.raises(IroiroError):
+            await translator.translate_entry("Fireball", "MGEF:FULL")
+    finally:
+        await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T86d_meta_response_prefix_match_raises() -> None:
+    """T86 補足 (v0.2.1): 行頭一致でも検出される。
+
+    Plan §5.7.4-7: ``text.startswith(phrase)`` で判定するため、
+    「翻訳します。」（句点付き）も「翻訳します」に続く語として検出される。
+    ※ 検出方法は startswith（行頭一致）。
+    """
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response("翻訳します。"))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        with pytest.raises(IroiroError):
+            await translator.translate_entry("Fireball", "MGEF:FULL")
+    finally:
+        await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T87_wakarimashita_accepted() -> None:
+    """T87 (v0.2.1): 「分かりました」は NPC セリフとして自然なため許容される。
+
+    REJECT_PHRASES に含まれないので正常な訳文として扱われる。
+    """
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response("分かりました"))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        result = await translator.translate_entry("Fireball", "MGEF:FULL")
+        assert result == "分かりました", f"許容されるはずの訳文: {result!r}"
+    finally:
+        await translator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T87b_hai_accepted() -> None:
+    """T87b (v0.2.1): 「はい」は NPC セリフとして自然なため許容される。"""
+    cfg = make_config()
+    client = make_mock_openai_client(
+        lambda req: httpx.Response(200, json=make_chat_response("はい"))
+    )
+    translator = Translator(cfg, client=client)
+    try:
+        result = await translator.translate_entry("Fireball", "MGEF:FULL")
+        assert result == "はい", f"許容されるはずの訳文: {result!r}"
+    finally:
+        await translator.aclose()
+
+
+# ===========================================================================
+# v0.2.1 補足: _is_meta_response / REJECT_PHRASES 単体テスト
+# ===========================================================================
+
+
+def test_is_meta_response_unit_reject_phrases() -> None:
+    """補足: REJECT_PHRASES の各要素が _is_meta_response で True になる。"""
+    from iroiro.translator import REJECT_PHRASES, _is_meta_response
+
+    for phrase in REJECT_PHRASES:
+        assert _is_meta_response(phrase) is True, (
+            f"REJECT_PHRASES の要素 {phrase!r} は True のはず"
+        )
+
+
+def test_is_meta_response_unit_accepted_phrases() -> None:
+    """補足: NPC セリフとして自然な言葉は _is_meta_response で False になる。"""
+    from iroiro.translator import _is_meta_response
+
+    for ok_text in [
+        "分かりました", "わかりました", "はい", "いいえ",
+        "すみません", "ごめんなさい", "ありがとう", "ありがとうございます",
+        "火の玉", "Fireball",
+    ]:
+        assert _is_meta_response(ok_text) is False, (
+            f"NPC セリフ {ok_text!r} は False のはず"
+        )
+
+
+def test_is_meta_response_empty_is_false() -> None:
+    """補足: 空文字列は _is_meta_response では False（ルール6 が別途処理）。"""
+    from iroiro.translator import _is_meta_response
+
+    assert _is_meta_response("") is False
+    assert _is_meta_response("   ") is False

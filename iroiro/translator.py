@@ -9,6 +9,8 @@ Plan §5.7 / §6.4 で規定される ``Translator`` と ``ApiConfig``、およ�
     * 長文スキップ: ``len(source) > max_chars`` は CLI 側でスキップ（translator は呼ばれない）。
     * post-processing: strip → フェンス削除 → 最初の行 → ラベル削除 → リストマーカー削除。
     * トークン整合性: 不一致なら ``IroiroError`` を raise（呼出側で state=failed にする）。
+    * v0.2.1: post-processing 後の空文字列（ルール6）・メタ返答（ルール7）も
+      ``IroiroError`` で raise し、呼出側で state=failed にする（§5.7.4）。
     * リトライ: 最大3回試行、指数バックオフ ``[1, 2]``（失敗時 ``IroiroError`` で wrap）。
 """
 
@@ -207,6 +209,42 @@ _FENCE_END_RE: re.Pattern[str] = re.compile(r"\n?```\s*$")
 _FENCE_LINE_RE: re.Pattern[str] = re.compile(r"^\s*```\s*$")
 
 
+# v0.2.1: LLM のメタ返答（指示受け取り・作業宣言・案内）を検出する厳選ブラックリスト。
+# NPC セリフとして自然な「分かりました」「はい」「すみません」等は含めない（誤検出防止）。
+# 将来拡張: ユーザーが発見したパターンは --reject-phrases CLI フラグで追加可能（v0.3 以降）。
+REJECT_PHRASES: frozenset[str] = frozenset({
+    # 指示受け取り（丁寧すぎて会話では出にくい）
+    "了解", "了解しました", "了解いたしました",
+    "承知", "承知いたしました", "承知しております",
+    "かしこまりました",
+    # 作業宣言（明らかにメタ言葉）
+    "翻訳", "翻訳します", "翻訳しました", "翻訳結果", "翻訳文",
+    "訳文", "訳しました", "訳します",
+    "以下に訳します", "訳文を示します",
+    # 案内（LLM の定型句）
+    "以下の通りです", "以下の通りとなります", "次のようになります",
+    "上記の通りです",
+})
+
+
+def _is_meta_response(text: str) -> bool:
+    """LLM のメタ返答（指示受け取り・作業宣言・案内）を検出する（Plan §5.7.4-7）。
+
+    ``text.strip()`` が ``REJECT_PHRASES`` のいずれかに **完全一致** または
+    **行頭一致**（``startswith``）する場合に True。
+
+    注意: 「分かりました」「はい」「いいえ」「すみません」等の
+    NPC セリフとして自然な言葉は除外している。
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False  # 空文字列は別ルール（ルール6）で処理
+    for phrase in REJECT_PHRASES:
+        if stripped == phrase or stripped.startswith(phrase):
+            return True
+    return False
+
+
 def _postprocess(raw: str) -> str:
     """LLM 出力の post-processing（Plan §5.7.4）。
 
@@ -337,6 +375,32 @@ class Translator:
                 reason,
             )
             raise IroiroError(f"token mismatch ({reason})")
+
+        # v0.2.1 ルール6: 空文字列チェック（Plan §5.7.4-6）
+        if not cleaned.strip():
+            _logger.warning(
+                "empty response after post-processing for rec=%s source=%r raw=%r",
+                rec,
+                source,
+                raw,
+            )
+            raise IroiroError(
+                f"LLM returned empty response after post-processing: source={source!r}"
+            )
+
+        # v0.2.1 ルール7: メタ返答チェック（Plan §5.7.4-7）
+        if _is_meta_response(cleaned):
+            _logger.warning(
+                "meta response (conversational filler) detected for rec=%s "
+                "source=%r raw=%r cleaned=%r",
+                rec,
+                source,
+                raw,
+                cleaned,
+            )
+            raise IroiroError(
+                f"LLM returned conversational filler (meta response): {cleaned!r}"
+            )
 
         return cleaned
 

@@ -271,6 +271,25 @@ iroiro は post-processing で一般的なノイズ（`訳文:` ラベル、````
 uv run iroiro translate INPUT.xml --concurrency 1
 ```
 
+### エントリが `failed` になる（空応答・メタ返答）
+
+v0.2.1 以降、LLM が post-processing 後も **空文字列** を返した場合、または
+**「指示を受けた応答」**（`了解しました`／`翻訳します`／`以下の通りです` 等）を返した場合は
+そのエントリを `state=failed` として元の `<Dest>` を保持する（安全側）。
+
+警告ログに `empty response after post-processing` または
+`meta response (conversational filler) detected` と出るので確認すること。
+
+> ※ `分かりました`／`はい`／`すみません` 等の NPC セリフとして自然な言葉は
+> `failed` にはならない（誤検出防止のため除外している）。
+
+> ⚠️ **過検出の可能性**: ブラックリストは **行頭一致（`startswith`）** で判定するため、
+> 「翻訳しますか？」等の NPC セリフが弾かれる可能性があります。実運用で問題になった場合は
+> `--reject-phrases` CLI フラグ（v0.3 以降）で調整可能、または issue でご報告ください。
+
+多数のエントリがこの理由で `failed` になる場合は、モデルの品質不足かプロンプト設定の問題。
+`--concurrency 1` で安定化するか、より指示追従性の高いモデルへの切り替えを検討する。
+
 ### 出力 XML が BOM / CRLF を保持していない
 
 iroiro は入力 XML の BOM / 改行コード / `standalone="yes"` 宣言を自動的に保持する。

@@ -91,7 +91,7 @@ iroiro/
 | `tests/test_xml_io.py` | XML I/O 周辺（T1-T10, T47-T53, T68）。round-trip・BOM/CRLF/宣言保持・CDATA/comment 検出・空要素展開 |
 | `tests/test_escape.py` | プレースホルダ検出・整合性検証（T11-T18, T45） |
 | `tests/test_progress.py` | 並行安全な progress.json 読み書き（T19-T25, T46, T50, T77-T80, T83） |
-| `tests/test_translator.py` | 翻訳エンジン・post-processing・リトライ（T26-T34, T41-T44, T51, T56-T63, T71-T76, T81/T81b） |
+| `tests/test_translator.py` | 翻訳エンジン・post-processing・リトライ（T26-T34, T41-T44, T51, T56-T63, T71-T76, T81/T81b, T85-T87b） |
 | `tests/test_cli.py` | E2E（T36-T40, T64-T67, T69-T70, T82）。`CliRunner` 経由で `translate` サブコマンドを検証 |
 
 ### 2. フィクスチャ（`tests/fixtures/`）
