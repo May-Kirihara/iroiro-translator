@@ -170,13 +170,13 @@ async def _cli_like_process(
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T26_normal_translation() -> None:
+async def test_T26_normal_translation(default_prompt_config) -> None:
     """T26: LLM が訳文のみを返した場合はそのまま返す。"""
     cfg = make_config()
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("火の玉"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "火の玉"
@@ -189,13 +189,13 @@ async def test_T26_normal_translation() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T27_strip_translation_label() -> None:
+async def test_T27_strip_translation_label(default_prompt_config) -> None:
     """T27: 行頭の `訳文:` ラベルを削除する（Plan §5.7.4 ノイズパターン）。"""
     cfg = make_config()
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("訳文: 火の玉"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "火の玉", f"ラベル削除後の訳文: {result!r}"
@@ -204,7 +204,7 @@ async def test_T27_strip_translation_label() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T27b_strip_other_labels() -> None:
+async def test_T27b_strip_other_labels(default_prompt_config) -> None:
     """T27 補足: 他のラベルパターン（Translation/日本語/Result/Output）も削除。"""
     cfg = make_config()
     for label in ["Translation:", "日本語:", "Result:", "Output:"]:
@@ -213,7 +213,7 @@ async def test_T27b_strip_other_labels() -> None:
                 200, json=make_chat_response(f"{_label} 火の玉")
             )
         )
-        translator = Translator(cfg, client=client)
+        translator = Translator(cfg, prompts=default_prompt_config, client=client)
         try:
             result = await translator.translate_entry("Fireball", "MGEF:FULL")
             assert result == "火の玉", f"ラベル {label!r} 削除後: {result!r}"
@@ -226,7 +226,7 @@ async def test_T27b_strip_other_labels() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T28_strip_code_fences() -> None:
+async def test_T28_strip_code_fences(default_prompt_config) -> None:
     """T28: ``` フェンスを削除する。"""
     cfg = make_config()
     client = make_mock_openai_client(
@@ -234,7 +234,7 @@ async def test_T28_strip_code_fences() -> None:
             200, json=make_chat_response("```\n火の玉\n```")
         )
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "火の玉", f"フェンス削除後: {result!r}"
@@ -248,7 +248,7 @@ async def test_T28_strip_code_fences() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T29_multiline_first_line_only() -> None:
+async def test_T29_multiline_first_line_only(default_prompt_config) -> None:
     """T29: 複数行返却時は最初の行のみ採用（Plan §5.7.4-2）。"""
     cfg = make_config()
     client = make_mock_openai_client(
@@ -257,7 +257,7 @@ async def test_T29_multiline_first_line_only() -> None:
             json=make_chat_response("火の玉\n\n説明: Fireball の訳文です。"),
         )
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "火の玉", f"最初の行のみ: {result!r}"
@@ -271,7 +271,7 @@ async def test_T29_multiline_first_line_only() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T30_token_missing_raises_and_keeps_original_dest() -> None:
+async def test_T30_token_missing_raises_and_keeps_original_dest(default_prompt_config) -> None:
     """T30: 原文に <alias=hero> があるが訳文に無い → IroiroError。
 
     CLI 側で state=failed, new_dest=original_dest になることをシミュレート検証。
@@ -282,7 +282,7 @@ async def test_T30_token_missing_raises_and_keeps_original_dest() -> None:
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("こんにちは、ようこそ！"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         # translate_entry 単体では IroiroError が上がる
         with pytest.raises(IroiroError):
@@ -310,12 +310,12 @@ async def test_T30_token_missing_raises_and_keeps_original_dest() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T31_retry_succeeds_on_third_attempt() -> None:
+async def test_T31_retry_succeeds_on_third_attempt(default_prompt_config) -> None:
     """T31: HTTP 500×2 → 200 でリトライ成功（Plan §5.7.5 リトライ）。"""
     cfg = make_config()
     handler = CountingHandler([(500, "err1"), (500, "err2"), (200, "火の玉")])
     client = make_mock_openai_client(handler)
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "火の玉"
@@ -330,7 +330,7 @@ async def test_T31_retry_succeeds_on_third_attempt() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T32_all_failures_raises() -> None:
+async def test_T32_all_failures_raises(default_prompt_config) -> None:
     """T32: 連続失敗で最終的に例外（state=failed に至る経路）。
 
     十分な数の 500 を用意して、実装のリトライ回数に依存しない。
@@ -339,7 +339,7 @@ async def test_T32_all_failures_raises() -> None:
     # 5回連続 500（実装が3回でも4回でも全失敗する）
     handler = CountingHandler([(500, f"err{i}") for i in range(5)])
     client = make_mock_openai_client(handler)
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         # translate_entry は最終的に IroiroError（translator.py で wrap）
         with pytest.raises(IroiroError):
@@ -370,7 +370,7 @@ async def test_T32_all_failures_raises() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T33_timeout_retry_then_fail() -> None:
+async def test_T33_timeout_retry_then_fail(default_prompt_config) -> None:
     """T33: タイムアウトでリトライし、最終的に失敗する。
 
     httpx.TimeoutException を投げ続けるモックを使用。
@@ -379,7 +379,7 @@ async def test_T33_timeout_retry_then_fail() -> None:
     # 十分な数のタイムアウト
     handler = CountingHandler([httpx.TimeoutException("timeout")] * 5)
     client = make_mock_openai_client(handler)
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry("Fireball", "MGEF:FULL")
@@ -493,7 +493,7 @@ def test_T43b_mixed_japanese_and_english_skipped() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T44_token_count_mismatch_keeps_original_dest() -> None:
+async def test_T44_token_count_mismatch_keeps_original_dest(default_prompt_config) -> None:
     """T44: トークン回数不一致 → IroiroError → state=failed, new_dest=original_dest。
 
     Plan §5.6.3: 単一セマンティクス。source で上書きしない。
@@ -506,7 +506,7 @@ async def test_T44_token_count_mismatch_keeps_original_dest() -> None:
             200, json=make_chat_response("<alias=a> のみ")
         )
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry(source, "MGEF:FULL")
@@ -532,7 +532,7 @@ async def test_T44_token_count_mismatch_keeps_original_dest() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_T51_original_dest_preserved_when_not_equal_source() -> None:
+async def test_T51_original_dest_preserved_when_not_equal_source(default_prompt_config) -> None:
     """T51: original_dest != source のケースでトークン不一致 → new_dest = original_dest。
 
     Plan §5.6.3 / §5.9: source で上書きしないことの証明。
@@ -548,7 +548,7 @@ async def test_T51_original_dest_preserved_when_not_equal_source() -> None:
             200, json=make_chat_response("こんにちは")  # <alias=hero> 無し
         )
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry(source, "MGEF:FULL")
@@ -579,7 +579,7 @@ async def test_T51_original_dest_preserved_when_not_equal_source() -> None:
 # ===========================================================================
 
 @pytest.mark.asyncio
-async def test_postprocess_strip_list_markers() -> None:
+async def test_postprocess_strip_list_markers(default_prompt_config) -> None:
     """補足: 行頭のリストマーカー `- `, `* `, `1. ` を削除（Plan §5.7.4-3）。"""
     cfg = make_config()
     for marker in ["- ", "* ", "1. "]:
@@ -588,7 +588,7 @@ async def test_postprocess_strip_list_markers() -> None:
                 200, json=make_chat_response(f"{_m}火の玉")
             )
         )
-        translator = Translator(cfg, client=client)
+        translator = Translator(cfg, prompts=default_prompt_config, client=client)
         try:
             result = await translator.translate_entry("Fireball", "MGEF:FULL")
             assert result == "火の玉", f"リストマーカー {marker!r} 削除後: {result!r}"
@@ -597,13 +597,13 @@ async def test_postprocess_strip_list_markers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_postprocess_keep_surrounding_quotes() -> None:
+async def test_postprocess_keep_surrounding_quotes(default_prompt_config) -> None:
     """補足: 前後の `'`, `"` は削除しない（Plan §5.7.4-5）。"""
     cfg = make_config()
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response('"火の玉"'))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         # 前後のクォートは保持される
@@ -613,7 +613,7 @@ async def test_postprocess_keep_surrounding_quotes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_postprocess_trim_whitespace() -> None:
+async def test_postprocess_trim_whitespace(default_prompt_config) -> None:
     """補足: 前後ホワイトスペース・末尾改行をトリム（Plan §5.7.4-1）。"""
     cfg = make_config()
     client = make_mock_openai_client(
@@ -621,7 +621,7 @@ async def test_postprocess_trim_whitespace() -> None:
             200, json=make_chat_response("  火の玉\n\n")
         )
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "火の玉", f"前後空白トリム後: {result!r}"
@@ -847,7 +847,7 @@ def test_T81d_default_skip_records_fingerprint_stable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T85_empty_response_raises_iroiro_error() -> None:
+async def test_T85_empty_response_raises_iroiro_error(default_prompt_config) -> None:
     """T85 (v0.2.1): LLM が空文字列を返した場合、IroiroError が raise される。
 
     Plan §5.7.4-6: post-processing 後が空文字列なら IroiroError。
@@ -858,7 +858,7 @@ async def test_T85_empty_response_raises_iroiro_error() -> None:
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response(""))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         # translate_entry 単体では IroiroError が上がる
         with pytest.raises(IroiroError):
@@ -882,7 +882,7 @@ async def test_T85_empty_response_raises_iroiro_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T85b_whitespace_only_response_raises_iroiro_error() -> None:
+async def test_T85b_whitespace_only_response_raises_iroiro_error(default_prompt_config) -> None:
     """T85 補足 (v0.2.1): 空白のみの応答も post-processing 後に空文字列 → IroiroError。
 
     Plan §5.7.4-6: 「空文字列（または空白のみ）」が対象。
@@ -891,7 +891,7 @@ async def test_T85b_whitespace_only_response_raises_iroiro_error() -> None:
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("   \n\t "))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry("Fireball", "MGEF:FULL")
@@ -900,7 +900,7 @@ async def test_T85b_whitespace_only_response_raises_iroiro_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T86_meta_response_ryoukai_raises() -> None:
+async def test_T86_meta_response_ryoukai_raises(default_prompt_config) -> None:
     """T86 (v0.2.1): 「了解しました」は REJECT_PHRASES に含まれる → IroiroError。
 
     指示受け取り系のメタ返答。NPC セリフとしては不自然。
@@ -909,7 +909,7 @@ async def test_T86_meta_response_ryoukai_raises() -> None:
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("了解しました"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry("Fireball", "MGEF:FULL")
@@ -932,13 +932,13 @@ async def test_T86_meta_response_ryoukai_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T86b_meta_response_honyaku_raises() -> None:
+async def test_T86b_meta_response_honyaku_raises(default_prompt_config) -> None:
     """T86b (v0.2.1): 「翻訳します」は作業宣言 → IroiroError。"""
     cfg = make_config()
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("翻訳します"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry("Fireball", "MGEF:FULL")
@@ -947,13 +947,13 @@ async def test_T86b_meta_response_honyaku_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T86c_meta_response_ika_raises() -> None:
+async def test_T86c_meta_response_ika_raises(default_prompt_config) -> None:
     """T86c (v0.2.1): 「以下の通りです」は案内定型句 → IroiroError（完全一致）。"""
     cfg = make_config()
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("以下の通りです"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry("Fireball", "MGEF:FULL")
@@ -962,7 +962,7 @@ async def test_T86c_meta_response_ika_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T86d_meta_response_prefix_match_raises() -> None:
+async def test_T86d_meta_response_prefix_match_raises(default_prompt_config) -> None:
     """T86 補足 (v0.2.1): 行頭一致でも検出される。
 
     Plan §5.7.4-7: ``text.startswith(phrase)`` で判定するため、
@@ -973,7 +973,7 @@ async def test_T86d_meta_response_prefix_match_raises() -> None:
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("翻訳します。"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         with pytest.raises(IroiroError):
             await translator.translate_entry("Fireball", "MGEF:FULL")
@@ -982,7 +982,7 @@ async def test_T86d_meta_response_prefix_match_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T87_wakarimashita_accepted() -> None:
+async def test_T87_wakarimashita_accepted(default_prompt_config) -> None:
     """T87 (v0.2.1): 「分かりました」は NPC セリフとして自然なため許容される。
 
     REJECT_PHRASES に含まれないので正常な訳文として扱われる。
@@ -991,7 +991,7 @@ async def test_T87_wakarimashita_accepted() -> None:
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("分かりました"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "分かりました", f"許容されるはずの訳文: {result!r}"
@@ -1000,13 +1000,13 @@ async def test_T87_wakarimashita_accepted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_T87b_hai_accepted() -> None:
+async def test_T87b_hai_accepted(default_prompt_config) -> None:
     """T87b (v0.2.1): 「はい」は NPC セリフとして自然なため許容される。"""
     cfg = make_config()
     client = make_mock_openai_client(
         lambda req: httpx.Response(200, json=make_chat_response("はい"))
     )
-    translator = Translator(cfg, client=client)
+    translator = Translator(cfg, prompts=default_prompt_config, client=client)
     try:
         result = await translator.translate_entry("Fireball", "MGEF:FULL")
         assert result == "はい", f"許容されるはずの訳文: {result!r}"
@@ -1015,21 +1015,26 @@ async def test_T87b_hai_accepted() -> None:
 
 
 # ===========================================================================
-# v0.2.1 補足: _is_meta_response / REJECT_PHRASES 単体テスト
+# v0.2.1 補足: _is_meta_response 単体テスト（v0.5 で signature 変更）
+#
+# v0.5（Plan 005 §2.6）: ``_is_meta_response`` は ``reject_phrases`` を
+# 引数に取る純粋関数になった。``REJECT_PHRASES`` 定数は削除されたため、
+# テストは ``default_prompt_config.reject_phrases`` を渡す（B7: 実装コードから
+# デフォルトを import しない）。
 # ===========================================================================
 
 
-def test_is_meta_response_unit_reject_phrases() -> None:
-    """補足: REJECT_PHRASES の各要素が _is_meta_response で True になる。"""
-    from iroiro.translator import REJECT_PHRASES, _is_meta_response
+def test_is_meta_response_unit_reject_phrases(default_prompt_config) -> None:
+    """補足: ``default_prompt_config.reject_phrases`` の各要素が True になる。"""
+    from iroiro.translator import _is_meta_response
 
-    for phrase in REJECT_PHRASES:
-        assert _is_meta_response(phrase) is True, (
-            f"REJECT_PHRASES の要素 {phrase!r} は True のはず"
+    for phrase in default_prompt_config.reject_phrases:
+        assert _is_meta_response(phrase, default_prompt_config.reject_phrases) is True, (
+            f"reject_phrases の要素 {phrase!r} は True のはず"
         )
 
 
-def test_is_meta_response_unit_accepted_phrases() -> None:
+def test_is_meta_response_unit_accepted_phrases(default_prompt_config) -> None:
     """補足: NPC セリフとして自然な言葉は _is_meta_response で False になる。"""
     from iroiro.translator import _is_meta_response
 
@@ -1038,14 +1043,168 @@ def test_is_meta_response_unit_accepted_phrases() -> None:
         "すみません", "ごめんなさい", "ありがとう", "ありがとうございます",
         "火の玉", "Fireball",
     ]:
-        assert _is_meta_response(ok_text) is False, (
+        assert _is_meta_response(ok_text, default_prompt_config.reject_phrases) is False, (
             f"NPC セリフ {ok_text!r} は False のはず"
         )
 
 
-def test_is_meta_response_empty_is_false() -> None:
+def test_is_meta_response_empty_is_false(default_prompt_config) -> None:
     """補足: 空文字列は _is_meta_response では False（ルール6 が別途処理）。"""
     from iroiro.translator import _is_meta_response
 
-    assert _is_meta_response("") is False
-    assert _is_meta_response("   ") is False
+    assert _is_meta_response("", default_prompt_config.reject_phrases) is False
+    assert _is_meta_response("   ", default_prompt_config.reject_phrases) is False
+
+
+# ===========================================================================
+# v0.5: T143-T145 — PromptConfig injection テスト（Plan 005 §4.3）
+#
+# Plan 005 §2.6: ``Translator`` は ``PromptConfig`` を受け取り、``_SYSTEM_PROMPT`` /
+# ``REJECT_PHRASES`` / ``_REC_HINTS`` の各ハードコード定数を置き換える。
+#
+# 本セクションは PromptConfig のカスタマイズが Translator の挙動に反映されることを
+# 検証する。テストヘルパー（factory）から PromptConfig を組み立てる（実装コードから
+# デフォルトを import しない・Plan 005 §4.2 / B7）。
+#
+# ※ PromptConfig の import は **local import**（関数内 import）にする。
+#    module-level で import すると WP-1 段階で test_translator.py 全体が collection
+#    error になり「既存テスト green」が確認できなくなる（Codex review 5回目 notes 1）。
+#    関数内で import することで、新規テストだけが ImportError で red になり、
+#    既存テストは影響を受けない。
+#
+# ※ ``_build_user_message`` / ``_is_meta_response`` の signature 変更（rec_hints /
+#    reject_phrases 引数追加）は WP-2 で実施される。本セクションのテストは新 signature
+#    を前提とするため WP-2 完了後に green 化する。
+# ===========================================================================
+
+
+def _make_custom_prompt_config():
+    """T143-T145 用のカスタム PromptConfig を構築するヘルパー（factory）。
+
+    Plan 005 §4.2 / B7: 実装コードからデフォルト値を import しない。テスト固有の
+    明確に異なる値を設定することで「カスタマイズが効いている」ことを検証可能にする。
+
+    ``PromptConfig`` は WP-2 で ``iroiro/translator.py`` に追加される dataclass。
+    本関数内で local import することで、WP-1 段階では ImportError になり
+    本ヘルパーを使うテストだけが red になる（既存テストは影響なし）。
+    """
+    from iroiro.translator import PromptConfig  # WP-2 で追加される dataclass
+
+    return PromptConfig(
+        system_prompt="【テスト用システムプロンプト】これはカスタム設定のシステムプロンプトです。",
+        rec_hints={
+            "WEAP:FULL": "【武器名カスタムヒント】武器の名前です。",
+            "MGEF:FULL": "【魔法名カスタムヒント】魔法の名前です。",
+        },
+        reject_phrases=frozenset({
+            "メタ返答テスト用語",
+            "ダミー語句その１",
+            "もう一つのダミー",
+        }),
+    )
+
+
+# ---------------------------------------------------------------------------
+# T143: PromptConfig を construct して Translator に渡す・system メッセージ検証
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_T143_translator_uses_custom_system_prompt() -> None:
+    """T143: カスタム ``PromptConfig`` を渡した ``Translator`` が LLM の system
+    メッセージに ``PromptConfig.system_prompt`` を使うことの検証。
+
+    Plan 005 §4.3 T143 / §2.6: ``Translator.__init__(cfg, prompts, client=None)``
+    で ``PromptConfig`` を受け取る。LLM への system message がカスタム値になる。
+
+    ※ WP-1 段階では ``PromptConfig`` が未実装のため local import で ImportError → red。
+    """
+    from iroiro.translator import Translator  # WP-2 で prompts 引数追加
+
+    captured_messages: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        body = _json.loads(request.content)
+        messages = body.get("messages", [])
+        captured_messages.extend(messages)
+        return httpx.Response(200, json=make_chat_response("火の玉"))
+
+    cfg = make_config()
+    client = make_mock_openai_client(handler)
+    prompts = _make_custom_prompt_config()
+    translator = Translator(cfg, prompts, client=client)
+    try:
+        await translator.translate_entry("Fireball", "MGEF:FULL")
+    finally:
+        await translator.aclose()
+
+    # system メッセージが PromptConfig.system_prompt と一致する
+    system_msgs = [m for m in captured_messages if m.get("role") == "system"]
+    assert len(system_msgs) == 1, f"system メッセージが1件ある: 実際 {system_msgs!r}"
+    assert system_msgs[0]["content"] == prompts.system_prompt, (
+        f"system メッセージがカスタム PromptConfig.system_prompt と一致する: "
+        f"実際 {system_msgs[0]['content']!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T144: reject_phrases をカスタマイズした PromptConfig で _is_meta_response 検証
+# ---------------------------------------------------------------------------
+
+def test_T144_is_meta_response_uses_custom_reject_phrases() -> None:
+    """T144: カスタム ``reject_phrases`` で ``_is_meta_response`` がカスタム語句を検出。
+
+    Plan 005 §4.3 T144 / §2.6: ``_is_meta_response(text, reject_phrases)`` に
+    signature 変更される。既存の ``REJECT_PHRASES`` 定数（"了解", "翻訳します" 等）には
+    無い「メタ返答テスト用語」をカスタム reject_phrases に含めることで検出される。
+
+    ※ WP-1 段階では ``_is_meta_response`` が 1引数のまま → TypeError で red。
+    """
+    from iroiro.translator import _is_meta_response  # WP-2 で signature 変更
+
+    prompts = _make_custom_prompt_config()
+
+    # カスタム reject_phrases に含まれる語句は True
+    assert _is_meta_response("メタ返答テスト用語", prompts.reject_phrases) is True, (
+        "カスタム reject_phrases の語句が True になる"
+    )
+    # 既存の REJECT_PHRASES の語句（カスタムに含まれない）は False
+    assert _is_meta_response("了解", prompts.reject_phrases) is False, (
+        "カスタム reject_phrases に無い既存語句は False になる"
+    )
+    # 通常の訳文は False
+    assert _is_meta_response("火の玉", prompts.reject_phrases) is False
+
+
+# ---------------------------------------------------------------------------
+# T145: rec_hints をカスタマイズした PromptConfig で user メッセージ検証
+# ---------------------------------------------------------------------------
+
+def test_T145_build_user_message_uses_custom_rec_hints() -> None:
+    """T145: カスタム ``rec_hints`` で ``_build_user_message`` がカスタムヒントを含む。
+
+    Plan 005 §4.3 T145 / §2.6: ``_build_user_message(source, rec, rec_hints)`` に
+    signature 変更される。カスタム rec_hints の値（``【武器名カスタムヒント】``）が
+    user message に含まれる。
+
+    ※ WP-1 段階では ``_build_user_message`` が 2引数のまま → TypeError で red。
+    """
+    from iroiro.translator import _build_user_message  # WP-2 で signature 変更
+
+    prompts = _make_custom_prompt_config()
+    source = "Iron Sword"
+
+    # WEAP:FULL にカスタムヒントを設定している
+    msg = _build_user_message(source, "WEAP:FULL", prompts.rec_hints)
+    # カスタムヒントが user message に含まれる
+    assert "【武器名カスタムヒント】" in msg, (
+        f"カスタム rec_hints の値が user message に含まれる: 実際 {msg!r}"
+    )
+    # source も含まれる
+    assert source in msg
+
+    # カスタム rec_hints に無い REC 型は source のみ（ヒント無し）
+    msg_unknown = _build_user_message(source, "UNKNOWN:REC", prompts.rec_hints)
+    assert msg_unknown == source, (
+        f"未知 REC 型は source そのものを返す: 実際 {msg_unknown!r}"
+    )

@@ -2,7 +2,20 @@
 #
 # Plan 004 §4.4: retry_failed は厳格 bool のみ許可。``true`` は ``True`` として
 # 反映される（resume 時に failed エントリを state=pending に戻す = 再翻訳対象）。
-# 検証容易性のため retry_failed 以外の項目は書かない（他は内蔵デフォルトに落ちる）。
+# 検証容易性のため retry_failed 以外の接続設定項目は書かない（他は内蔵デフォルトに落ちる）。
+#
+# v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
+#   T110 では ``result == {"retry_failed": True}`` の厳密比較をするが、WP-1 段階では
+#   3 新項目は未知キー扱いで無視されるため比較は成功する。WP-2 完了後に assertion 更新。
 
 [iroiro]
 retry_failed = true
+
+# === v0.5 新規（LLM 挙動中核・必須）===
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+"""
+reject_phrases = ["了解", "翻訳します"]
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。"

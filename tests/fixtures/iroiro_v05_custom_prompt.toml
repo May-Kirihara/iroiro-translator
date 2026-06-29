@@ -1,0 +1,34 @@
+# iroiro_v05_custom_prompt.toml — カスタム system_prompt / reject_phrases / rec_hints
+# （T143-T145 用）
+#
+# 既存の iroiro/translator.py の _SYSTEM_PROMPT / REJECT_PHRASES / _REC_HINTS 定数とは
+# 異なる値を設定する。「ユーザーがカスタマイズした LLM 挙動が実際に Translator に
+# 注入されていること」を検証可能にするため、明確に異なる値にする。
+#
+# - system_prompt: 「【テスト用システムプロンプト】」の接頭辞付き（既存とは完全に別物）
+# - reject_phrases: 「メタ返答テスト用語」「ダミー語句」等の独自語句
+# - rec_hints: 「WEAP:FULL」に「【武器名カスタムヒント】」を設定
+
+[iroiro]
+api_base      = "http://localhost:8081/v1"
+api_key       = "iroiro"
+model         = "test-custom-model"
+timeout       = 30.0
+concurrency   = 1
+max_chars     = 4000
+retry_failed  = false
+
+# === カスタム（既存の _SYSTEM_PROMPT 定数とは異なる値）===
+system_prompt = "【テスト用システムプロンプト】これはカスタム設定のシステムプロンプトです。"
+
+# === カスタム（既存の REJECT_PHRASES とは異なる語句）===
+reject_phrases = [
+  "メタ返答テスト用語",
+  "ダミー語句その１",
+  "もう一つのダミー",
+]
+
+[iroiro.rec_hints]
+# === カスタム（既存の _REC_HINTS とは異なる値）===
+"WEAP:FULL" = "【武器名カスタムヒント】武器の名前です。"
+"MGEF:FULL" = "【魔法名カスタムヒント】魔法の名前です。"

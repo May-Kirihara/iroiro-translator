@@ -1,0 +1,25 @@
+# iroiro_v05_missing_prompt.toml — system_prompt 欠損（T133 / T147 用）
+#
+# v0.5 の LLM 挙動中核 3 項目のうち、system_prompt だけ欠損。
+# WP-2 完了後に load_config が必須エラー（IroiroError）を送出することを検証する。
+# 期待されるエラーメッセージ（§2.8）: "[iroiro] system_prompt is required in <path>"
+
+[iroiro]
+api_base      = "http://localhost:8081/v1"
+api_key       = "iroiro"
+model         = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+timeout       = 120.0
+concurrency   = 1
+max_chars     = 4000
+retry_failed  = false
+
+# system_prompt は意図的に書かない（必須エラー検証用）
+
+reject_phrases = [
+  "了解", "了解しました", "了解いたしました",
+  "翻訳します",
+]
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。"
+"BOOK:DESC" = "書籍の本文。"

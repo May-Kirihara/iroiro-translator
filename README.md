@@ -25,13 +25,11 @@ Skyrim MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods
 - **翻訳スキップ REC 型**（v0.2）— 内部管理用レコード（`HDPT:FULL` 等12件）を自動スキップ。`--no-skip-default-records` / `--skip-records` で制御。詳細は [docs/usage.md](docs/usage.md)
 - **設定ファイル**（v0.3）— 繰り返し使う設定（LLM エンドポイント・API キー・モデル名・タイムアウト等）を `iroiro.toml` に書いておけます。`.gitignore` 対象・環境依存情報をプロジェクトに混入させない。詳細は [docs/usage.md](docs/usage.md)
 - **failed エントリの再試行**（v0.4）— LLM の一時的エラー等で `failed` になったエントリを `--retry-failed` で再翻訳対象に戻せる。`iroiro.toml` の `retry_failed = true` でデフォルト化も可。詳細は [docs/usage.md](docs/usage.md)
+- **LLM プロンプト・エラー判定語句の完全 toml 化**（v0.5）— `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` の LLM 挙動中核を `iroiro.toml` で編集可能。コード内のハードコード定数を完全削除。`iroiro.toml` が `--dry-run` 含む全操作で必須になりました（**後方互換性の破れ**・詳細は [docs/usage.md](docs/usage.md)）
 - **再開機能**（`--resume`） — 進捗ファイルから続きを実行
 - **dry-run モード**（`--dry-run`） — LLM を呼ばず処理件数のみ表示
 - **並列実行**（`--concurrency`） と **HTTP タイムアウト設定**（`--timeout`）
 
-> **⚠️ v0.1 からの動作変更**: v0.2 では内部管理用 REC 型（`HDPT:FULL` 等12件）が
-> **デフォルトで翻訳スキップ** されるようになりました。v0.1 と同じ動作を維持したい場合は
-> `--no-skip-default-records` フラグを指定してください。詳細は [docs/usage.md](docs/usage.md)。
 
 ---
 
@@ -70,7 +68,19 @@ uv sync
 > **注意**: リポジトリには翻訳対象のサンプル XML は含まれません（第三者著作物のため git 管理外）。
 > お手持ちの MOD XML（xTranslator 形式の `SSTXMLRessources` v2）を各自で用意してください。
 
-### 3. dry-run で動作確認
+### 3. 設定ファイルを作成（必須・v0.5）
+
+v0.5 では `iroiro.toml` が `--dry-run` を含む全操作で必須です。雛形をコピーします
+（LLM 挙動中核のデフォルト値が全て入っているため、編集なしでも動きます）:
+
+```bash
+cp iroiro.toml.example iroiro.toml   # 雛形をコピー（.gitignore 対象・commit しない）
+# 必要なら iroiro.toml を編集（api_key / model / system_prompt 等）
+```
+
+詳細は [詳細な使い方](docs/usage.md) を参照。
+
+### 4. dry-run で動作確認
 
 LLM サーバーを起動せずに、処理件数の集計だけを行う:
 
@@ -90,18 +100,6 @@ INFO  Parsed 679 <String> entries (BOM=True, newline='\r\n', encoding=UTF-8)
 スキップ（長文超過）: 0
 --dry-run: LLM を呼ばず終了します
 ```
-
-### 4. 設定を保存（任意）
-
-繰り返し使う設定（LLM エンドポイント・API キー・モデル名・タイムアウト等）は `iroiro.toml` に
-書いておけます。毎回 CLI フラグを打つ必要がなくなります。
-
-```bash
-cp iroiro.toml.example iroiro.toml   # 雛形をコピー
-# iroiro.toml を編集して値を設定（.gitignore 対象・commit しない）
-```
-
-詳細は [詳細な使い方](docs/usage.md) を参照。
 
 ---
 
@@ -133,10 +131,12 @@ CLI フラグ全一覧・設定例・トラブルシュートは [詳細な使�
 - [実装計画 v0.2](docs/plans/002-skip-records.md) — v0.2 翻訳スキップ REC 型の設計判断
 - [実装計画 v0.3](docs/plans/003-config-file.md) — v0.3 設定ファイル（`iroiro.toml`）の設計判断
 - [実装計画 v0.4](docs/plans/004-retry-failed.md) — v0.4 failed エントリ再試行（`--retry-failed`）の設計判断
+- [実装計画 v0.5](docs/plans/005-llm-config.md) — v0.5 LLM プロンプト・エラー判定語句の完全 toml 化の設計判断
 - [引き継ぎ v0.1](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.2](docs/handoff/002-skip-records.md) — v0.2 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.3](docs/handoff/003-config-file.md) — v0.3 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.4](docs/handoff/004-retry-failed.md) — v0.4 完了時の引き継ぎメモ・検証結果
+- [引き継ぎ v0.5](docs/handoff/005-llm-config.md) — v0.5 完了時の引き継ぎメモ・検証結果
 
 ---
 

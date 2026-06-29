@@ -30,7 +30,7 @@ uv sync           # dev extras（pytest / ruff / mypy）を含めて依存関係
 ### テスト全実行
 
 ```bash
-uv run pytest                          # 165 テスト（v0.4 で +21件: test_config T110-T113, test_progress T118-T121 + T130, test_cli T114-T117 + T123-T129 + T131）
+uv run pytest                          # 191 テスト（v0.5 で +26件: test_config T132-T142 + T149-T157, test_translator T143-T145, test_cli T146-T148 + T154・既存 fixtures 拡充）
 uv run pytest -k "xml_io"              # 個別実行（キーワード指定）
 uv run pytest --tb=no -q               # 簡易出力
 ```
@@ -56,14 +56,14 @@ uv run mypy iroiro                     # 型検査（iroiro/ のみ・strict で
 iroiro/
 ├── __init__.py        # パッケージ初期化・__version__
 ├── __main__.py        # python -m iroiro エントリポイント
-├── cli.py             # typer ベースの CLI。translate サブコマンド・--retry-failed フラグ・_apply_existing 拡張（v0.4）
-├── config.py          # RunConfig dataclass（retry_failed 含む・v0.4）/ load_config（iroiro.toml ローダー・v0.3）/ _validate_bool（v0.4）
+├── cli.py             # typer ベースの CLI。translate サブコマンド・--retry-failed フラグ・_apply_existing 拡張（v0.4）・RunConfig に PromptConfig 追加・--config help 更新（v0.5）
+├── config.py          # RunConfig dataclass（retry_failed 含む・v0.4）/ load_config（iroiro.toml ローダー・v0.3・v0.5 で必須化）/ _validate_bool（v0.4）/ _validate_system_prompt / _validate_reject_phrases / _validate_rec_hints（v0.5）
 ├── errors.py          # IroiroError 共通例外
 ├── escape.py          # プレースホルダ検出（extract_tokens）/ 整合性検証（tokens_match）
 ├── logging.py         # rich ベースの進捗表示ヘルパ
 ├── models.py          # StringEntry / FileFormat dataclass
 ├── progress.py        # ProgressWriter（asyncio.Lock + 原子書き込み）/ ProgressData・mark_failed 重複チェック・mark_done failed クリア（v0.4）
-├── translator.py      # Translator / ApiConfig / is_translation_needed（OpenAI 互換クライアント）
+├── translator.py      # Translator / ApiConfig / PromptConfig（v0.5）/ is_translation_needed（OpenAI 互換クライアント・v0.5 でハードコード定数を完全削除し PromptConfig 注入に変更）
 └── xml_io.py          # parse_xml / serialize_xml（BOM/CRLF/宣言保持）
 ```
 
@@ -91,9 +91,9 @@ iroiro/
 | `tests/test_xml_io.py` | XML I/O 周辺（T1-T10, T47-T53, T68）。round-trip・BOM/CRLF/宣言保持・CDATA/comment 検出・空要素展開 |
 | `tests/test_escape.py` | プレースホルダ検出・整合性検証（T11-T18, T45） |
 | `tests/test_progress.py` | 並行安全な progress.json 読み書き（T19-T25, T46, T50, T77-T80, T83）。v0.4 追加: `mark_failed` 重複チェック・`mark_done` failed クリア（T118-T121） |
-| `tests/test_translator.py` | 翻訳エンジン・post-processing・リトライ（T26-T34, T41-T44, T51, T56-T63, T71-T76, T81/T81b, T85-T87b） |
-| `tests/test_config.py` | `iroiro.toml` ローダー `load_config`（T88-T102・v0.3）。パス解決・型/値域検証・bool 拒否・未知キー警告。v0.4 追加: `retry_failed` 厳格 bool 検証（T110-T113） |
-| `tests/test_cli.py` | E2E（T36-T40, T64-T67, T69-T70, T82, T103-T109）。`CliRunner` 経由で `translate` サブコマンドを検証。v0.4 追加: `_apply_existing` の retry_failed 分岐（T114-T117）・`--retry-failed` / `--no-retry-failed` の CLI 統合（T123-T129） |
+| `tests/test_translator.py` | 翻訳エンジン・post-processing・リトライ（T26-T34, T41-T44, T51, T56-T63, T71-T76, T81/T81b, T85-T87b）。v0.5 追加: `PromptConfig` 注入・カスタム `system_prompt` / `reject_phrases` / `rec_hints` の検証・空 `rec_hints` 時の `_build_user_message`（T143-T145・T157）。既存 `Translator` 構築箇所の signature 追随 |
+| `tests/test_config.py` | `iroiro.toml` ローダー `load_config`（T88-T102・v0.3）。パス解決・型/値域検証・bool 拒否・未知キー警告。v0.4 追加: `retry_failed` 厳格 bool 検証（T110-T113）。v0.5 追加: `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` 必須化・厳格型検証・`iroiro.toml` 無しエラー・`[iroiro]` セクション無しエラー・quoted REC key・`iroiro.toml.example` の tomllib parse 検証（T132-T142, T149-T156・既存 T88/T94/T103 等の v0.5 化） |
+| `tests/test_cli.py` | E2E（T36-T40, T64-T67, T69-T70, T82, T103-T109）。`CliRunner` 経由で `translate` サブコマンドを検証。v0.4 追加: `_apply_existing` の retry_failed 分岐（T114-T117）・`--retry-failed` / `--no-retry-failed` の CLI 統合（T123-T129）。v0.5 追加: `iroiro.toml` 無し dry-run エラー・3 新項目欠損エラー・3 新項目あり dry-run 正常・CLI → `PromptConfig` 注入の検証（T146-T148, T154） |
 
 ### 2. フィクスチャ（`tests/fixtures/`）
 
@@ -105,7 +105,7 @@ XML I/O の検証用に小さなサンプル XML を同梱（実データ由来�
 - `long_source.xml` — `max-chars` 超過
 - `with_comment.xml` / `with_cdata.xml` — コメント・CDATA 検出用
 - `skip_records.xml` — HDPT/WEAP/MGEF/RACE/BPTD/ACTI/空/日本語 の8エントリを含むテスト用 XML（BOM + CRLF + `standalone="yes"`）
-- `iroiro_*.toml` — `load_config` 検証用の TOML フィクスチャ。v0.3: `iroiro_full` / `iroiro_partial` / `iroiro_broken` / `iroiro_not_table` / `iroiro_other_only` / `iroiro_unknown_key` / `iroiro_empty_base` / `iroiro_max_chars_zero` の8種。v0.4 追加: `iroiro_retry_true` / `iroiro_retry_false` の2種（`retry_failed` 厳格 bool 検証用・T110/T111）
+- `iroiro_*.toml` — `load_config` 検証用の TOML フィクスチャ。v0.3: `iroiro_full` / `iroiro_partial` / `iroiro_broken` / `iroiro_not_table` / `iroiro_other_only` / `iroiro_unknown_key` / `iroiro_empty_base` / `iroiro_max_chars_zero` の8種。v0.4 追加: `iroiro_retry_true` / `iroiro_retry_false` の2種（`retry_failed` 厳格 bool 検証用・T110/T111）。v0.5 追加: `iroiro_v05_full` / `iroiro_v05_missing_prompt` / `iroiro_v05_missing_reject` / `iroiro_v05_missing_rec_hints` / `iroiro_v05_empty_reject` / `iroiro_v05_custom_prompt` の6種（3 新項目の必須検証・quoted REC key）。既存 7 fixtures に 3 新項目を追記（必須チェックで fail しないよう）
 
 ### 3. E2E（実 LLM）
 
@@ -171,13 +171,19 @@ v0.1 は英→日バッチ翻訳の安定版。以降は以下を予定（PR 歓
 
 - **failed エントリの再試行** — `--retry-failed` / `--no-retry-failed` CLI フラグ・`iroiro.toml` の `retry_failed` 設定。`--resume` 時に `failed` エントリを再翻訳対象に戻す。優先順位は CLI フラグ ＞ `iroiro.toml` ＞ 内蔵デフォルト `False`（後方互換）。`mark_done` で `failed` をクリア（不変性 entries ∩ failed = ∅）・`mark_failed` 重複チェック。詳細は [docs/plans/004-retry-failed.md](plans/004-retry-failed.md) と [docs/handoff/004-retry-failed.md](handoff/004-retry-failed.md)。
 
-### v0.5 以降（予定）
+### v0.5（✅ 完了）
+
+- **LLM プロンプト・エラー判定語句の完全 toml 化** — `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` の LLM 挙動中核 3 要素を `iroiro/translator.py` から完全削除し `iroiro.toml` に移行（案 α）。`iroiro.toml` の必須化（`--dry-run` 含む全操作）・`PromptConfig` dataclass の導入・3 新項目の厳格型検証。後方互換性の破れ（`iroiro.toml` 無しで動く v0.4 までの挙動を廃止）。詳細は [docs/plans/005-llm-config.md](plans/005-llm-config.md) と [docs/handoff/005-llm-config.md](handoff/005-llm-config.md)。
+
+### v0.6 以降（予定）
 
 - **`max_tokens` 設定** — LLM の生成トークン上限を `iroiro.toml` / CLI フラグで調整可能に（`--ctx-size` 不足の空応答対策・v0.4 でスコープ外）
+- **接続設定 6 項目の必須化検討** — `api_base` 等の接続設定も v0.5 と同様に `iroiro.toml` 必須にするか（v0.5 では LLM 挙動中核のみ必須化・接続設定は省略可のまま）
 - 用語集機能（JSON/YAML形式・人間メンテ可能）
 - 長文 BOOK の自動分割
 - 実 LLM での品質レビュー用 diff 出力
 - SSTXMLRessources v3 / Interface/*.txt 対応
-- `skip_records` / `reject_phrases` の `iroiro.toml` 化
+- `skip_records` の `iroiro.toml` 化（CLI フラグ `--skip-records` のみ対応・toml からは未指定）
 - `iroiro.toml` の親ディレクトリ遡り探索
 - 選択的リトライ（`--retry-failed-only INDEX` 等・v0.4 は全 failed 一括のみ）
+- CI での `iroiro.toml.example` 構文検証（T155 で回帰防止済み・継続保証）

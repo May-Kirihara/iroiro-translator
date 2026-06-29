@@ -56,6 +56,33 @@ class ApiConfig:
     max_chars: int
 
 
+@dataclass(slots=True)
+class PromptConfig:
+    """LLM 挙動中核設定（v0.5・Plan 005 §2.6）。
+
+    ``system_prompt`` / ``rec_hints`` / ``reject_phrases`` の 3 要素を保持する。
+    v0.4 までは ``_SYSTEM_PROMPT`` / ``_REC_HINTS`` / ``REJECT_PHRASES`` の各
+    ハードコード定数として ``iroiro/translator.py`` に埋め込まれていたが、
+    v0.5 で ``iroiro.toml`` から注入する形式に変更された（案 α）。
+
+    注: ``frozen=True`` は付けない。``rec_hints: dict[str, str]`` が mutable な
+    ``dict`` であるため、``frozen`` でも完全な不変性が保証できない（Codex review
+    指摘・N1）。実用上 ``PromptConfig`` の再代入を防ぐだけで十分。
+    ``reject_phrases`` は ``frozenset[str]`` で完全不変。
+
+    Attributes:
+        system_prompt: LLM のシステムメッセージ全文（翻訳方針）。
+        rec_hints: ``<REC>`` 別のヒント辞書。REC 型（例: ``"MGEF:FULL"``）→
+            ヒント文字列。空 ``{}`` は許可（REC ヒント無効化）。
+        reject_phrases: LLM メタ返答ブラックリスト。``frozenset[str]``。
+            空 ``frozenset()`` は許可（メタ返答チェック無効化）。
+    """
+
+    system_prompt: str
+    rec_hints: dict[str, str]
+    reject_phrases: frozenset[str]
+
+
 # ---------------------------------------------------------------------------
 # Source 言語判定
 # ---------------------------------------------------------------------------
@@ -145,46 +172,23 @@ def _parse_skip_records(text: str) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
-# プロンプト（Plan §5.7.3）
+# プロンプト（Plan §5.7.3 / Plan 005 §2.6）
+#
+# v0.5（Plan 005 §2.1）: ``_SYSTEM_PROMPT`` / ``_REC_HINTS`` / ``REJECT_PHRASES``
+# の各ハードコード定数は **完全削除** された。これらは ``iroiro.toml`` から
+# ``PromptConfig`` 経由で注入される（案 α・コード内に魔法の文字列を残さない）。
 # ---------------------------------------------------------------------------
 
 
-_SYSTEM_PROMPT = (
-    "Skyrim MOD の英文を日本語に翻訳する。"
-    "固有名詞・ <alias=...> 等のプレースホルダ・ <br>・改行文字・ # 記号は "
-    "**そのまま維持** すること。"
-    "簡潔で自然な日本語。**訳文のみ** 出力し、"
-    "説明・マークダウン・ラベル・複数行は禁止。"
-)
+def _build_user_message(
+    source: str, rec: str, rec_hints: dict[str, str]
+) -> str:
+    """``<REC>`` 別のヒント + 原文 で user メッセージを構築する。
 
-
-# ``<REC>`` 別のプロンプトヒント（Plan §5.7.3 user message）。
-# ヒントが無い REC は汎用メッセージを使う。
-_REC_HINTS: dict[str, str] = {
-    "MGEF:FULL": "魔法の効果名。1〜4語程度の簡潔な表現。",
-    "MGEF:DESC": "魔法の効果の説明文。自然な日本語の文章。",
-    "ARMO:FULL": "防具の名称。1〜4語程度。",
-    "ARMO:DESC": "防具の説明文。",
-    "BOOK:FULL": "書籍のタイトル。簡潔な表現。",
-    "BOOK:DESC": "書籍の本文。物語風の自然な日本語。",
-    "WEAP:FULL": "武器の名称。1〜4語程度。",
-    "SPEL:FULL": "スペル（能力）の名称。",
-    "ACTI:FULL": "アクティベータ（家具/看板等）の名称。",
-    "ALCH:FULL": "錬金術素材/薬の名称。",
-    "ENCH:FULL": "エンチャント（効果）の名称。",
-    "INGR:FULL": "錬金術素材の名称。",
-    "NPC_:FULL": "NPC の名称。固有名詞として扱う。",
-    "FACT:FULL": "派閥（ファクション）の名称。",
-    "INFO:RNAM": "NPC のセリフ（会話の応答）。自然な会話文。",
-    "QUST:FULL": "クエストのタイトル。",
-    "RACE:FULL": "種族の名称。",
-    "CLAS:FULL": "クラス（職業）の名称。",
-}
-
-
-def _build_user_message(source: str, rec: str) -> str:
-    """``<REC>`` 別のヒント + 原文 で user メッセージを構築する。"""
-    hint = _REC_HINTS.get(rec)
+    v0.5（Plan 005 §2.6）: ``rec_hints`` を引数で受ける純粋関数になった。
+    ``rec_hints`` が空 ``{}`` の場合は常に source のみを返す（REC ヒント無効化）。
+    """
+    hint = rec_hints.get(rec)
     if hint:
         return f"{hint}\n\n{source}"
     return source
@@ -209,37 +213,29 @@ _FENCE_END_RE: re.Pattern[str] = re.compile(r"\n?```\s*$")
 _FENCE_LINE_RE: re.Pattern[str] = re.compile(r"^\s*```\s*$")
 
 
-# v0.2.1: LLM のメタ返答（指示受け取り・作業宣言・案内）を検出する厳選ブラックリスト。
-# NPC セリフとして自然な「分かりました」「はい」「すみません」等は含めない（誤検出防止）。
-# 将来拡張: ユーザーが発見したパターンは --reject-phrases CLI フラグで追加可能（v0.3 以降）。
-REJECT_PHRASES: frozenset[str] = frozenset({
-    # 指示受け取り（丁寧すぎて会話では出にくい）
-    "了解", "了解しました", "了解いたしました",
-    "承知", "承知いたしました", "承知しております",
-    "かしこまりました",
-    # 作業宣言（明らかにメタ言葉）
-    "翻訳", "翻訳します", "翻訳しました", "翻訳結果", "翻訳文",
-    "訳文", "訳しました", "訳します",
-    "以下に訳します", "訳文を示します",
-    # 案内（LLM の定型句）
-    "以下の通りです", "以下の通りとなります", "次のようになります",
-    "上記の通りです",
-})
+# v0.2.1: LLM のメタ返答（指示受け取り・作業宣言・案内）を検出する語句群。
+# v0.5（Plan 005 §2.1）: ``REJECT_PHRASES`` 定数は **完全削除** された。
+# これらは ``iroiro.toml`` から ``PromptConfig.reject_phrases`` 経由で注入される。
+# NPC セリフとして自然な「分かりました」「はい」「すみません」等は ``iroiro.toml``
+# に含めない（誤検出防止・ユーザー編集対象）。
 
 
-def _is_meta_response(text: str) -> bool:
+def _is_meta_response(text: str, reject_phrases: frozenset[str]) -> bool:
     """LLM のメタ返答（指示受け取り・作業宣言・案内）を検出する（Plan §5.7.4-7）。
 
-    ``text.strip()`` が ``REJECT_PHRASES`` のいずれかに **完全一致** または
+    v0.5（Plan 005 §2.6）: ``reject_phrases`` を引数で受ける純粋関数になった。
+
+    ``text.strip()`` が ``reject_phrases`` のいずれかに **完全一致** または
     **行頭一致**（``startswith``）する場合に True。
 
     注意: 「分かりました」「はい」「いいえ」「すみません」等の
-    NPC セリフとして自然な言葉は除外している。
+    NPC セリフとして自然な言葉は ``reject_phrases`` に含めないことで除外される
+    （v0.5 ではユーザーが ``iroiro.toml`` で自由に編集可能）。
     """
     stripped = text.strip()
     if not stripped:
         return False  # 空文字列は別ルール（ルール6）で処理
-    for phrase in REJECT_PHRASES:
+    for phrase in reject_phrases:
         if stripped == phrase or stripped.startswith(phrase):
             return True
     return False
@@ -300,15 +296,17 @@ _RETRYABLE_EXC: tuple[type[BaseException], ...] = (
 
 
 class Translator:
-    """OpenAI 互換 LLM で英文を日本語訳する（Plan §5.7 / §6.4）。
+    """OpenAI 互換 LLM で英文を日本語訳する（Plan §5.7 / §6.4 / Plan 005 §2.6）。
 
     Args:
         cfg: API 設定。
+        prompts: LLM 挙動中核設定（v0.5）。``system_prompt`` / ``rec_hints`` /
+            ``reject_phrases`` を含む。``iroiro.toml`` から構築される。
         client: ``openai.AsyncOpenAI`` インスタンス。``None`` の場合は ``cfg`` から構築する。
             テスト容易性のため DI 可能（``httpx.MockTransport`` を注入）。
 
     Usage:
-        translator = Translator(cfg)
+        translator = Translator(cfg, prompts)
         try:
             translated = await translator.translate_entry(source, rec)
         finally:
@@ -318,9 +316,11 @@ class Translator:
     def __init__(
         self,
         cfg: ApiConfig,
+        prompts: PromptConfig,
         client: openai.AsyncOpenAI | None = None,
     ) -> None:
         self._cfg = cfg
+        self._prompts = prompts
         if client is None:
             self._client = openai.AsyncOpenAI(
                 base_url=cfg.base_url,
@@ -389,7 +389,8 @@ class Translator:
             )
 
         # v0.2.1 ルール7: メタ返答チェック（Plan §5.7.4-7）
-        if _is_meta_response(cleaned):
+        # v0.5: ``reject_phrases`` は ``self._prompts`` から取得（Plan 005 §2.6）
+        if _is_meta_response(cleaned, self._prompts.reject_phrases):
             _logger.warning(
                 "meta response (conversational filler) detected for rec=%s "
                 "source=%r raw=%r cleaned=%r",
@@ -419,8 +420,16 @@ class Translator:
                 resp = await self._client.chat.completions.create(
                     model=self._cfg.model,
                     messages=[
-                        {"role": "system", "content": _SYSTEM_PROMPT},
-                        {"role": "user", "content": _build_user_message(source, rec)},
+                        {
+                            "role": "system",
+                            "content": self._prompts.system_prompt,
+                        },
+                        {
+                            "role": "user",
+                            "content": _build_user_message(
+                                source, rec, self._prompts.rec_hints
+                            ),
+                        },
                     ],
                 )
                 content = resp.choices[0].message.content

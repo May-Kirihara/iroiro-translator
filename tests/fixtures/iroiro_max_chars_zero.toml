@@ -3,6 +3,17 @@
 # max_chars = 0 は「全件スキップ」を意味する正当値（§4.5.1）。
 # load_config は 0 を受理し、返り値 dict に max_chars = 0 として含める。
 # `>= 0` の境界値検証。
+#
+# v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
 
 [iroiro]
 max_chars = 0
+
+# === v0.5 新規（LLM 挙動中核・必須）===
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+"""
+reject_phrases = ["了解", "翻訳します"]
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。"

@@ -1,4 +1,4 @@
-# iroiro-translator 設定ファイル（v0.3 / v0.4）
+# iroiro-translator 設定ファイル（v0.3 / v0.4 / v0.5）
 #
 # 使い方:
 #   1. このファイルを `iroiro.toml` にコピー
@@ -13,11 +13,24 @@
 #
 #   ※ `--max-chars 0` や `--api-key ""` のような「 falsy な明示値」も
 #      正しく CLI 指定として優先されます（`is None` 判定のため）。
+#   ※ v0.5 新規（LLM 挙動中核・必須）の 3 項目は CLI フラグでの上書き非対応:
+#      ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]`` は
+#      ``iroiro.toml`` のみで指定する（セキュリティ・利便性のバランス）。
 #
 # 検索位置:
 #   - `--config PATH` で明示指定時はそのファイルのみ読む
 #   - 未指定時はカレントディレクトリ（コマンドを実行したディレクトリ）の
 #     `iroiro.toml` を探す（親ディレクトリへの遡りはしない）
+#
+# v0.5 での破壊的変更（Plan 005 §2.2 / §2.9）:
+#   - ``iroiro.toml`` は ``--dry-run`` 含む全操作で **必須** になりました。
+#     v0.4 までは ``iroiro.toml`` 無しでも内蔵デフォルトで動きましたが、
+#     v0.5 では LLM 挙動中核（``system_prompt`` / ``reject_phrases`` /
+#     ``[iroiro.rec_hints]``）の完全 toml 化（案 α）のため、これらが欠損すると
+#     ``Error: iroiro.toml not found in <cwd>.`` 等のエラーで停止します。
+#   - 既存の ``iroiro.toml`` を流用する場合は **3 新項目を手動追記** する必要が
+#     あります（``cp iroiro.toml.example iroiro.toml`` で上書きすると既存の API 設定が
+#     消えるため）。詳しくは docs/usage.md / docs/handoff/005-llm-config.md を参照。
 #
 # ⚠️ セキュリティ注意:
 #   - API キーは CLI フラグ `--api-key` より `iroiro.toml` に書く方が安全
@@ -31,10 +44,65 @@
 # 詳細は docs/usage.md / docs/design.md を参照。
 
 [iroiro]
-# api_base      = "http://localhost:8081/v1"   # OpenAI 互換 API のベース URL（非空）
+# === 既存（接続設定・省略可） ===
+# api_base      = "http://localhost:8080/v1"   # OpenAI 互換 API のベース URL（非空）
 # api_key       = "iroiro"                      # API キー（"" 許可・llama.cpp は検証しない）
 # model         = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"  # モデル名（非空）
 # timeout       = 120.0                         # 1リクエストの読み出しタイムアウト秒（> 0）
 # concurrency   = 1                             # 同時リクエスト数（>= 1）
 # max_chars     = 4000                          # 1エントリの最大文字数（>= 0・0 は全件スキップ）
 # retry_failed  = false                         # resume 時に failed を再試行するか（bool 厳格・v0.4 追加）
+
+# === v0.5 新規（LLM 挙動中核・必須） ===
+# ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]`` は **必須** です。
+# ``iroiro.toml`` にこれらが無い場合、``Error: [iroiro] system_prompt is required``
+# 等のエラーで停止します。下記のデフォルト値をそのまま使うか、適宜編集してください。
+#
+# ※ ``system_prompt`` は LLM への翻訳方針指示。TOML の multiline string（""" ... """）で記述。
+# ※ ``reject_phrases`` は LLM のメタ返答（指示受け取り・作業宣言・案内定型句）のブラックリスト。
+#    NPC セリフとして自然な「分かりました」「はい」「すみません」等は **含めない** こと（誤検出防止）。
+#    空リスト ``[]`` も許可（メタ返答チェック無効化）。
+# ※ ``[iroiro.rec_hints]`` は ``<REC>`` 別のヒント辞書。REC キーは ``:`` を含むため
+#    **必ず quoted key**（``"MGEF:FULL"`` のように ``"`` で囲む）で書くこと
+#    （TOML 1.0 の bare key は ``:`` を許容しないため・B5 指摘）。
+#    空テーブル ``{}``（ヘッダのみ）も許可（REC ヒント無効化）。
+#    未知の REC キー（``"FOO:BAR"`` 等）も WARNING 無しで許可されます（将来拡張のため）。
+
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+固有名詞・ <alias=...> 等のプレースホルダ・ <br>・改行文字・ # 記号は
+**そのまま維持** すること。
+簡潔で自然な日本語。**訳文のみ** 出力し、
+説明・マークダウン・ラベル・複数行は禁止。
+"""
+
+reject_phrases = [
+  "了解", "了解しました", "了解いたしました",
+  "承知", "承知いたしました", "承知しております",
+  "かしこまりました",
+  "翻訳", "翻訳します", "翻訳しました", "翻訳結果", "翻訳文",
+  "訳文", "訳しました", "訳します",
+  "以下に訳します", "訳文を示します",
+  "以下の通りです", "以下の通りとなります", "次のようになります",
+  "上記の通りです",
+]
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。1〜4語程度の簡潔な表現。"
+"MGEF:DESC" = "魔法の効果の説明文。自然な日本語の文章。"
+"ARMO:FULL" = "防具の名称。1〜4語程度。"
+"ARMO:DESC" = "防具の説明文。"
+"BOOK:FULL" = "書籍のタイトル。簡潔な表現。"
+"BOOK:DESC" = "書籍の本文。物語風の自然な日本語。"
+"WEAP:FULL" = "武器の名称。1〜4語程度。"
+"SPEL:FULL" = "スペル（能力）の名称。"
+"ACTI:FULL" = "アクティベータ（家具/看板等）の名称。"
+"ALCH:FULL" = "錬金術素材/薬の名称。"
+"ENCH:FULL" = "エンチャント（効果）の名称。"
+"INGR:FULL" = "錬金術素材の名称。"
+"NPC_:FULL" = "NPC の名称。固有名詞として扱う。"
+"FACT:FULL" = "派閥（ファクション）の名称。"
+"INFO:RNAM" = "NPC のセリフ（会話の応答）。自然な会話文。"
+"QUST:FULL" = "クエストのタイトル。"
+"RACE:FULL" = "種族の名称。"
+"CLAS:FULL" = "クラス（職業）の名称。"

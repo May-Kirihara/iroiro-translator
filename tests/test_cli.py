@@ -56,6 +56,45 @@ from iroiro.models import StringEntry
 from iroiro.progress import ProgressData
 
 # ===========================================================================
+# 共通 fixture: tests/fixtures ディレクトリ（v0.5 T146-T148 / T154 用）
+# ===========================================================================
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+# ===========================================================================
+# v0.5: iroiro.toml 必須化対応（Plan 005 §2.2）
+#
+# v0.5 では ``iroiro.toml`` は ``--dry-run`` 含む全操作で必須。既存テストの多くは
+# 「toml 無しで動く」v0.4 前提で書かれているため、v0.5 フル設定（3 新項目含む）の
+# ``iroiro.toml`` を cwd に自動配置する fixture を導入する。
+#
+# ※ test_config.py の ``test_T88`` / ``test_T94`` / ``test_T103`` / ``test_T142`` /
+#    ``test_T146`` / ``test_T149`` 等「toml 無し・section 無し」を検証するテストは
+#    この fixture を使わずに直接 ``monkeypatch.chdir(tmp_path)`` する。
+# ===========================================================================
+
+
+@pytest.fixture
+def v05_default_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """v0.5 フル設定の ``iroiro.toml`` を cwd に自動配置する（既存テスト用）。
+
+    Plan 005 §2.2: ``iroiro.toml`` は ``--dry-run`` 含む全操作で必須。本 fixture は
+    ``iroiro_v05_full.toml``（3 新項目含むフル設定）を ``tmp_path / "iroiro.toml"``
+    に配置し、cwd を ``tmp_path`` に切り替える。
+
+    既存テストが ``iroiro.toml`` を明示的に配置する場合は、本 fixture を使わずに
+    個別に ``shutil.copy`` する（T104/T105/T106/T108/T109/T126/T127 等）。
+    """
+    import shutil as _shutil
+    _shutil.copy(FIXTURES_DIR / "iroiro_v05_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+# ===========================================================================
 # MockTranslator: LLM を呼ばずに固定訳文を返す
 # ===========================================================================
 
@@ -88,11 +127,15 @@ def patch_translator(monkeypatch: pytest.MonkeyPatch):
     """iroiro.cli / iroiro.translator の Translator を MockTranslator で差し替える。
 
     handler を渡してカスタマイズ可能。
+
+    v0.5（Plan 005 §2.6）: ``Translator(cfg, prompts, client=None)`` に signature
+    変更されたため、``factory`` は ``prompts`` を受け取れるようにしている
+    （MockTranslator は prompts を使用しないが、位置引数で渡されるのを吸収）。
     """
     installed: dict[str, MockTranslator] = {}
 
     def install(handler: Callable[[str, str], str] | None = None) -> None:
-        def factory(cfg, client=None, **kwargs):
+        def factory(cfg, prompts=None, client=None, **kwargs):
             inst = MockTranslator(cfg, client=client, handler=handler)
             installed["inst"] = inst
             return inst
@@ -164,6 +207,7 @@ def test_T36_translate_basic(
     tiny_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T36: tiny.xml を translate し、出力 XML を再 parse して期待通り。"""
     patch_translator(handler=lambda src, rec: f"【訳】{src}")
@@ -206,6 +250,7 @@ def test_T37_dry_run_no_output(
     tiny_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T37: --dry-run では出力ファイルを生成せず、処理件数を表示する。"""
     patch_translator(handler=lambda src, rec: f"【訳】{src}")  # 呼ばれないはず
@@ -230,6 +275,7 @@ def test_T38_resume_reads_progress(
     tiny_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T38: --resume 時に progress.json の訳文を再利用し、続きを処理する。
 
@@ -306,6 +352,7 @@ def test_T39_failure_preserves_original_dest(
     tiny_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T39: 翻訳失敗時は <Dest> が original_dest を保持する。
 
@@ -342,6 +389,7 @@ def test_T40_xtranslator_interop(
     tiny_crlf_bom_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T40: 出力 XML の宣言/BOM/CRLF/aliasエスケープが xTranslator 互換。
 
@@ -404,6 +452,7 @@ def test_T64_no_skip_default_records_translates_hdpt(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T64: --no-skip-default-records 指定で HDPT:FULL が翻訳対象になる。
 
@@ -437,6 +486,7 @@ def test_T65_skip_records_adds_acti_full(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T65: --skip-records "ACTI:FULL" 指定で ACTI:FULL が追加スキップされる。
 
@@ -471,6 +521,7 @@ def test_T66_no_skip_default_plus_skip_records_mgef(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T66: --no-skip-default-records + --skip-records "MGEF:FULL" の複合ケース。
 
@@ -518,6 +569,7 @@ def test_T67_dry_run_includes_rec_skip_line(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T67: dry-run 出力に「スキップ（REC 型）」行が含まれる。
 
@@ -543,6 +595,7 @@ def test_T69_dry_run_no_double_count_between_rec_and_lang(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T69: dry-run で REC skip と言語 skip が重複カウントされない。
 
@@ -598,6 +651,7 @@ def test_T70_rec_skipped_entry_preserves_original_dest(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T70: REC skip されたエントリの <Dest> が original_dest を保持する。
 
@@ -656,6 +710,7 @@ def test_T82_cli_resume_fingerprint_mismatch_exit_code_2(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T82: CLI レベルで skip_records を変更して --resume → exit code 2 で停止。
 
@@ -738,15 +793,18 @@ def test_T82_cli_resume_fingerprint_mismatch_exit_code_2(
 def capture_api_config(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     """iroiro.cli.Translator を差し替え、構築された ApiConfig を capture する。
 
-    dry-run でない場合、``translate()`` は ``Translator(cfg.api)`` を呼ぶので、
+    dry-run でない場合、``translate()`` は ``Translator(cfg.api, prompts)`` を呼ぶので、
     その ``cfg.api``（ApiConfig インスタンス）を capture できる。
     返り値の ``list[0]`` が構築された ApiConfig。
 
     MockTranslator を差し込むので LLM は呼ばれない（tiny.xml で高速）。
+
+    v0.5（Plan 005 §2.6）: ``Translator(cfg, prompts, client=None)`` に signature
+    変更されたため、``factory`` は ``prompts`` を受け取れるようにしている。
     """
     captured: list[object] = []
 
-    def factory(cfg, client=None, **kwargs):
+    def factory(cfg, prompts=None, client=None, **kwargs):
         captured.append(cfg)
         return MockTranslator(cfg, client=client)
 
@@ -781,31 +839,26 @@ def _run_translate_with_config(
 
 
 # ---------------------------------------------------------------------------
-# T103: iroiro.toml 無し cwd + フラグ無し → 内蔵デフォルト使用（v0.1 互換）
+# T103: iroiro.toml 無し cwd + フラグ無し → IroiroError（v0.5 で後方互換性破壊）
 # ---------------------------------------------------------------------------
 
-def test_T103_no_toml_no_flags_uses_builtin_defaults(
+def test_T103_no_toml_no_flags_raises_in_v05(
     tiny_xml: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capture_api_config: list[object],
 ) -> None:
-    """T103: iroiro.toml 無し cwd + フラグ無し → 内蔵デフォルト使用（v0.1 互換）。
+    """T103: iroiro.toml 無し cwd + フラグ無し → exit code 2（v0.5）。
 
-    後方互換性の回帰保証。toml が存在せず CLI フラグも省略した場合は、
-    ``iroiro/cli.py`` の ``DEFAULT_*`` 定数がそのまま使われる。
-    （Plan §4.4 の最弱優先順位・v0.1 と同じ挙動）
+    v0.4 までは後方互換（``{}`` 扱いで内蔵デフォルト使用）だったが、v0.5 では
+    ``iroiro.toml`` が必須（Plan 005 §2.2 / §2.9）。``IroiroError`` →
+    ``typer.Exit(code=2)`` で停止する。
+
+    ※ 本テストは v0.4 挙動（内蔵デフォルト使用）を検証していたが、v0.5 で
+       後方互換性が破られたため、v0.5 の新契約（必須エラー）を検証する形に更新。
+       T146 と同じ ``exit code 2`` パターン（``IroiroError`` を catch して
+       ``typer.Exit(code=2)`` でラップ）。
     """
     import shutil
-
-    from iroiro.cli import (
-        DEFAULT_API_BASE,
-        DEFAULT_API_KEY,
-        DEFAULT_CONCURRENCY,
-        DEFAULT_MAX_CHARS,
-        DEFAULT_MODEL,
-        DEFAULT_TIMEOUT,
-    )
 
     tmp_input = tmp_path / "tiny.xml"
     shutil.copy(tiny_xml, tmp_input)
@@ -814,17 +867,12 @@ def test_T103_no_toml_no_flags_uses_builtin_defaults(
     output = tmp_path / "out_t103.xml"
     result = _run_translate_with_config(tmp_input, output=output)
 
-    assert result.exit_code == 0, f"CLI 成功: {result.output}"
-    assert len(capture_api_config) == 1, "Translator が1回構築された"
-    cfg = capture_api_config[0]
-    assert cfg.base_url == DEFAULT_API_BASE, (
-        f"api_base は内蔵デフォルト: 実際 {cfg.base_url!r}"
+    assert result.exit_code == 2, (
+        f"iroiro.toml 無しで exit code 2: 実際 {result.exit_code}\n"
+        f"output: {result.output}"
     )
-    assert cfg.api_key == DEFAULT_API_KEY
-    assert cfg.model == DEFAULT_MODEL
-    assert cfg.timeout == DEFAULT_TIMEOUT
-    assert cfg.concurrency == DEFAULT_CONCURRENCY
-    assert cfg.max_chars == DEFAULT_MAX_CHARS
+    # 出力ファイルは生成されない
+    assert not output.exists(), "エラー時は出力ファイルを生成しない"
 
 
 # ---------------------------------------------------------------------------
@@ -1307,6 +1355,7 @@ def test_T123_resume_without_retry_keeps_failed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T123: ``--resume`` のみ（``--retry-failed`` 無指定）→ entry 1 は再翻訳されない。
 
@@ -1363,6 +1412,7 @@ def test_T124_resume_retry_failed_retranslates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T124: ``--resume --retry-failed`` → entry 1 が再翻訳される。
 
@@ -1414,6 +1464,7 @@ def test_T125_retry_success_clears_failed_in_progress(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T125: retry 成功時の **不変性** 検証（最重要テスト）。
 
@@ -1611,6 +1662,7 @@ def test_T129_retry_failed_without_resume_warns_and_continues(
     monkeypatch: pytest.MonkeyPatch,
     patch_translator,
     caplog: pytest.LogCaptureFixture,
+    v05_default_config,
 ) -> None:
     """T129: ``--retry-failed`` 単独（``--resume`` 無し）→ 警告ログ + exit 0。
 
@@ -1670,6 +1722,7 @@ def test_T131_resume_retry_failed_refail_keeps_original_dest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     patch_translator,
+    v05_default_config,
 ) -> None:
     """T131: progress.json failed=[1] + --resume --retry-failed + mock が失敗 →
     index 1 は再び failed・new_dest=original_dest で保持・重複 append なし。
@@ -1748,3 +1801,260 @@ def test_T131_resume_retry_failed_refail_keeps_original_dest(
         f"entry[1] の <Dest> は original_dest を保持（Plan 004 §4.7）: "
         f"実際 {out_entry1.original_dest!r} vs 期待 {entry1_original_dest!r}"
     )
+
+
+# ===========================================================================
+# v0.5: T146-T148, T154 — iroiro.toml 必須化・3 新項目の CLI 統合テスト
+# （Plan 005 §4.4 / §4.5）
+#
+# Plan 005 §2.2 / §2.9: v0.5 では ``iroiro.toml`` が ``--dry-run`` 含む全操作で必須。
+# 3 新項目（``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]``）も必須。
+# これらを CLI ``translate`` サブコマンド経由で検証する。
+#
+# ※ 既存テスト（T36-T40 等）は v0.4 挙動（``iroiro.toml`` 無しでも ``--dry-run`` が
+#    動く）を前提としているが、本セクションの新規テストは v0.5 の新しい契約を検証する。
+#    WP-1 段階では load_config が 3 新項目を検証しないため、T146 / T147 は red。
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# T146: iroiro.toml 無しで translate INPUT.xml --dry-run → exit 2 + エラーメッセージ
+# ---------------------------------------------------------------------------
+
+def test_T146_no_config_file_dry_run_exit_code_2(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T146: ``iroiro.toml`` 無しで ``translate INPUT.xml --dry-run`` → exit 2。
+
+    Plan 005 §2.2 / §2.9 / §4.4 T146: ``iroiro.toml`` は ``--dry-run`` 含む全操作で必須。
+    v0.4 までは後方互換（``{}`` 扱い）で動いたが、v0.5 では ``IroiroError`` →
+    ``typer.Exit(code=2)`` で停止する。エラーメッセージに ``cp iroiro.toml.example``
+    等の手がかりを含むことが推奨される（§2.8）。
+
+    ※ 既存 T107 と同じ ``exit code 2`` パターン（``IroiroError`` を catch して
+        ``typer.Exit(code=2)`` でラップ）。T107 は ``--config missing.toml`` 明示指定時、
+        T146 は ``--config`` 無指定・cwd に ``iroiro.toml`` 無しの場合。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    # cwd は tmp_path の空ディレクトリ（iroiro.toml 無し）
+    monkeypatch.chdir(tmp_path)
+
+    output = tmp_path / "out_t146.xml"
+    result = _run_translate_with_config(
+        tmp_input,
+        output=output,
+        extra_args=["--dry-run"],
+    )
+
+    assert result.exit_code == 2, (
+        f"iroiro.toml 無し --dry-run で exit code 2: 実際 {result.exit_code}\n"
+        f"output: {result.output}"
+    )
+    # 出力ファイルは生成されない
+    assert not output.exists(), "エラー時は出力ファイルを生成しない"
+
+
+# ---------------------------------------------------------------------------
+# T147: iroiro.toml 有り・3 新項目無し → exit 2 + 各項目の必須エラー
+# ---------------------------------------------------------------------------
+
+def test_T147_missing_required_keys_exit_code_2(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T147: ``iroiro.toml`` 有り・3 新項目無し → exit 2 + 各項目の必須エラー。
+
+    Plan 005 §4.4 T147: 3 新項目のいずれかが欠損している場合 ``IroiroError`` →
+    ``exit code 2``。各欠損ケース（``system_prompt`` / ``reject_phrases`` /
+    ``[iroiro.rec_hints]``）を個別に検証する。
+    """
+    import shutil
+
+    # 各 v0.5 欠損 fixture について検証
+    missing_fixtures = [
+        ("iroiro_v05_missing_prompt.toml", "system_prompt"),
+        ("iroiro_v05_missing_reject.toml", "reject_phrases"),
+        ("iroiro_v05_missing_rec_hints.toml", "rec_hints"),
+    ]
+
+    for fixture_name, expected_key in missing_fixtures:
+        # 各ケースで独立した tmp_path の下で実行したいが、pytest は1テスト関数で
+        # 1 tmp_path を渡すため、サブディレクトリで分離する
+        case_dir = tmp_path / fixture_name.replace(".toml", "")
+        case_dir.mkdir()
+        tmp_input = case_dir / "tiny.xml"
+        shutil.copy(tiny_xml, tmp_input)
+        shutil.copy(FIXTURES_DIR / fixture_name, case_dir / "iroiro.toml")
+        monkeypatch.chdir(case_dir)
+
+        output = case_dir / "out.xml"
+        result = _run_translate_with_config(
+            tmp_input,
+            output=output,
+            extra_args=["--dry-run"],
+        )
+
+        assert result.exit_code == 2, (
+            f"{fixture_name}（{expected_key} 欠損）で exit code 2: "
+            f"実際 {result.exit_code}\noutput: {result.output}"
+        )
+        # エラーメッセージに欠損キー名が言及される
+        assert expected_key in result.output, (
+            f"エラーメッセージに {expected_key} が言及される: "
+            f"実際 {result.output!r}"
+        )
+        # 出力ファイルは生成されない
+        assert not output.exists(), "エラー時は出力ファイルを生成しない"
+
+        # 次のケースのために cwd を戻す（tmp_path の外）
+        monkeypatch.chdir(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# T148: iroiro.toml 有り・3 新項目有り・--dry-run → 正常終了（件数表示）
+# ---------------------------------------------------------------------------
+
+def test_T148_full_v05_config_dry_run_succeeds(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T148: ``iroiro.toml`` 有り・3 新項目有り・``--dry-run`` → 正常終了。
+
+    Plan 005 §4.4 T148: v0.5 のフル設定（3 新項目含む）の ``iroiro.toml`` がある場合、
+    ``--dry-run`` が正常終了（``exit code 0``）することを検証する。
+    ``--dry-run`` でも ``iroiro.toml`` 必須・3 新項目必須の検証は走る（§2.9 一貫性）。
+
+    ※ 本テストは v0.5 の完全契約を検証するため、3 新項目が ``load_config`` で
+        **正しく検証されて受理される** ことも併せて検証する。WP-1 段階では
+        ``load_config`` が 3 新項目を未知キー扱い（``WARNING: unknown key 'system_prompt'``
+        等のログ）するため、そのログを検出して red になる。WP-2 完了後に WARNING が
+        消えて green 化。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    shutil.copy(FIXTURES_DIR / "iroiro_v05_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    output = tmp_path / "out_t148.xml"
+    result = _run_translate_with_config(
+        tmp_input,
+        output=output,
+        extra_args=["--dry-run"],
+    )
+
+    assert result.exit_code == 0, (
+        f"v0.5 フル設定で --dry-run が正常終了: 実際 {result.exit_code}\n"
+        f"output: {result.output}"
+    )
+    # 出力ファイルは生成されない（dry-run）
+    assert not output.exists(), "dry-run では出力ファイルを生成しない"
+    # 何らかの処理件数表示がある
+    assert len(result.output) > 0, "dry-run の出力が空でない"
+
+    # ★ v0.5 完了後は 3 新項目が ``load_config`` で正しく検証されて受理されるため、
+    # ``system_prompt`` / ``reject_phrases`` / ``rec_hints`` に対する WARNING は出ない。
+    # WP-1 段階では未知キー扱いされるため ``WARNING  unknown key 'system_prompt' ...``
+    # 等のログが出る → ここで red。
+    out = result.output
+    assert "unknown key 'system_prompt'" not in out, (
+        f"system_prompt は未知キー扱いされない（v0.5 で正しく検証される）: "
+        f"実際 {out!r}"
+    )
+    assert "unknown key 'reject_phrases'" not in out, (
+        f"reject_phrases は未知キー扱いされない（v0.5 で正しく検証される）: "
+        f"実際 {out!r}"
+    )
+    assert "unknown key 'rec_hints'" not in out, (
+        f"rec_hints は未知キー扱いされない（v0.5 で正しく検証される）: "
+        f"実際 {out!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T154: CLI translate() が load_config() から PromptConfig を構築し Translator に渡す
+# ---------------------------------------------------------------------------
+
+def test_T154_cli_constructs_translator_with_prompt_config(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T154: ``translate()`` が ``load_config()`` から ``PromptConfig`` を構築し
+    ``Translator`` に渡すことの検証。
+
+    Plan 005 §4.5 T154 / §2.7: ``--resume`` 経路で実際に ``Translator`` が
+    construct される（``--dry-run`` では ``Translator`` が construct されないため
+    non-dry-run 経路が必要）。モックで ``Translator`` 構築を capture し、
+    ``prompts`` 引数に ``PromptConfig`` が渡っていることを検証する。
+
+    ※ WP-1 段階では ``PromptConfig`` が未実装のため local import で ImportError → red。
+    """
+    import shutil
+
+    # WP-2 で追加される PromptConfig を local import（red を新規テストだけに閉じる）
+    from iroiro.translator import PromptConfig  # noqa: F401
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    shutil.copy(FIXTURES_DIR / "iroiro_v05_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    # Translator 構築を capture（prompts も含めて）
+    captured_prompts: list[object] = []
+
+    def factory(cfg, *args, **kwargs):
+        # v0.5 の Translator(cfg, prompts, client=...) signature に対応
+        # prompts は位置引数（args[0]）or キーワード引数のいずれかで渡る
+        prompts = None
+        if len(args) >= 1:
+            prompts = args[0]
+        elif "prompts" in kwargs:
+            prompts = kwargs["prompts"]
+        captured_prompts.append(prompts)
+        # テスト容易性のため MockTranslator 的な振る舞いをする最小オブジェクトを返す
+        class _Stub:
+            async def translate_entry(self, source: str, rec: str) -> str:
+                return f"【訳】{source}"
+
+            async def aclose(self) -> None:
+                pass
+
+        return _Stub()
+
+    monkeypatch.setattr("iroiro.cli.Translator", factory, raising=False)
+    monkeypatch.setattr("iroiro.translator.Translator", factory, raising=False)
+
+    output = tmp_path / "out_t154.xml"
+    # ``--resume`` 経路で Translator が construct されるように non-dry-run で実行
+    result = _run_translate_with_config(tmp_input, output=output)
+
+    assert result.exit_code == 0, (
+        f"CLI 成功: 実際 {result.exit_code}\noutput: {result.output}"
+    )
+    # Translator が construct された
+    assert len(captured_prompts) == 1, (
+        f"Translator が1回 construct された: 実際 {len(captured_prompts)}回"
+    )
+    # ★ PromptConfig が渡された
+    prompts = captured_prompts[0]
+    assert prompts is not None, (
+        "Translator に prompts が渡された（None でない）"
+    )
+    assert isinstance(prompts, PromptConfig), (
+        f"prompts は PromptConfig 型: 実際 {type(prompts)!r}"
+    )
+    # カスタム system_prompt / reject_phrases / rec_hints が toml から読まれている
+    assert prompts.system_prompt.strip() != ""
+    assert hasattr(prompts, "reject_phrases")
+    assert hasattr(prompts, "rec_hints")
+    # rec_hints は v0.5 フル設定の 18 種
+    assert "MGEF:FULL" in prompts.rec_hints

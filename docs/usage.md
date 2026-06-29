@@ -16,7 +16,7 @@ iroiro translate INPUT.xml [OPTIONS]
 |---|---|---|---|
 | `INPUT`（引数） | PATH（必須） | — | 入力 XML ファイルのパス |
 | `-o`, `--output` | PATH | `<input>.translated.xml` | 出力 XML ファイルのパス |
-| `--config` | PATH | なし | `iroiro.toml` 設定ファイルのパス（未指定時は cwd の `iroiro.toml` を探す）（v0.3） |
+| `--config` | PATH | なし | `iroiro.toml` 設定ファイルのパス（未指定時は cwd の `iroiro.toml` を探す・**v0.5 では `iroiro.toml` が必須**）（v0.3） |
 | `--api-base` | TEXT | `http://localhost:8081/v1` | OpenAI 互換 API のベース URL（llama.cpp server） |
 | `--api-key` | TEXT | `iroiro` | API キー（llama.cpp では検証されない。`Authorization: Bearer` ヘッダとしては送信する） |
 | `--model` | TEXT | `ggml-org/gemma-4-12B-it-GGUF:Q4_K_M` | モデル名 |
@@ -41,6 +41,13 @@ iroiro translate INPUT.xml [OPTIONS]
 > （上表の値）の順で解決されます。各フラグを省略したとき `iroiro.toml` の値が使われます。
 > 詳細は下記の「設定ファイル（v0.3）」節を参照。
 
+> **⚠️ v0.5 の破壊的変更**: `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` の
+> **LLM 挙動中核 3 項目** は v0.5 で新規追加され、上の解決順序には **乗りません**。これらは
+> **`iroiro.toml` のみ** で指定し、CLI フラグでの上書きは非対応です（長文を shell history に残す
+> リスクを避けるため）。また `iroiro.toml` 自体が `--dry-run` を含む全操作で **必須** になりました。
+> 詳細は下記の「[`iroiro.toml` 必須化と移行（v0.5）](#iroirotoml-必須化と移行v05)」節と
+> 「[LLM プロンプトのカスタマイズ（v0.5）](#llm-プロンプトのカスタマイズv05)」節を参照。
+
 ---
 
 ## 設定ファイル（v0.3）
@@ -49,24 +56,54 @@ CLI フラグを毎回打つ代わりに、`iroiro.toml` に LLM エンドポイ
 タイムアウト・並列数・`max_chars` のデフォルト値を書いておけます。LLM サーバーを頻繁に切り替える
 利用者（llama.cpp / LM Studio / Ollama 等）の負担を減らすための機能です。
 
-> v0.3 は後方互換です。`iroiro.toml` を置かなければ v0.2.1 以前と同じ挙動（CLI フラグ ＞ 内蔵
-> デフォルト）のまま動きます。
+> v0.3 は後方互換でしたが、**v0.5 で `iroiro.toml` が必須化** されました（LLM 挙動中核の完全
+> toml 化のため）。v0.4 以前の `iroiro.toml` 無しで動く挙動は v0.5 で廃止されています。
+> 詳細は「[`iroiro.toml` 必須化と移行（v0.5）](#iroirotoml-必須化と移行v05)」節を参照。
 
 ### 書き方
 
 TOML 形式・単一の `[iroiro]` テーブルに `snake_case`（小文字＋アンダースコア）でキーを書きます。
-**全項目省略可能** で、書かなかった項目は内蔵デフォルトに落ちます。
+
+v0.5 ではキーは **2 群** に分かれます:
+
+- **接続設定（省略可・6項目）**: `api_base` / `api_key` / `model` / `timeout` / `concurrency` / `max_chars`（＋ `retry_failed`）。書かなかった項目は CLI フラグ指定時はそちら優先、未指定時は内蔵デフォルトに落ちます。
+- **LLM 挙動中核（必須・3項目・v0.5 新規）**: `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`。`iroiro.toml` に必ず書く必要があります（CLI フラグでの上書き非対応・省略時はエラーで停止）。
 
 ```toml
 [iroiro]
+# === 接続設定（省略可・CLI フラグ ＞ iroiro.toml ＞ 内蔵デフォルト）===
 api_base    = "http://localhost:8081/v1"
 api_key     = "iroiro"
 model       = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
 timeout     = 120.0
 concurrency = 1
 max_chars   = 4000
-retry_failed = false   # v0.4 追加・省略時は false 扱い（後方互換）
+retry_failed = false   # v0.4 追加・省略時は false 扱い
+
+# === LLM 挙動中核（必須・v0.5 新規・全文は iroiro.toml.example を参照）===
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+固有名詞・ <alias=...> 等のプレースホルダ・ <br>・改行文字・ # 記号は
+**そのまま維持** すること。
+簡潔で自然な日本語。**訳文のみ** 出力し、
+説明・マークダウン・ラベル・複数行は禁止。
+"""
+
+reject_phrases = [
+  "了解", "了解しました", "翻訳します", "以下の通りです",
+  # ...（21語全文は iroiro.toml.example を参照）
+]
+
+# 別テーブルとして記述（[iroiro] の外・ quoted REC key 必須）:
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。1〜4語程度の簡潔な表現。"
+"BOOK:DESC" = "書籍の本文。物語風の自然な日本語。"
+# ...（18種全文は iroiro.toml.example を参照）
 ```
+
+> **重要（TOML 構文）**: `[iroiro.rec_hints]` 配下のキーは `MGEF:FULL` のように `:` を含むため、
+> **必ず quoted key**（`"MGEF:FULL"` のように `"` で囲む）で書いてください。TOML 1.0 の
+> bare key は `:` を許容しないため、quoted でないと parse error になります。
 
 ### 優先順位
 
@@ -87,8 +124,9 @@ retry_failed = false   # v0.4 追加・省略時は false 扱い（後方互換�
 - **`--config PATH` で明示指定時**: そのファイル **のみ** 読みます。存在しない場合は即時エラー
   （exit code 2）。
 - **`--config` 無指定時**: コマンドを実行したディレクトリ（cwd）の `iroiro.toml` を探します。
-  存在すれば読み、存在しなければ何もしません（後方互換・警告も出ません）。
-- **親ディレクトリへの遡りはしません**（git の `.git` 探索のような動作は v0.3 では未対応）。
+  v0.4 までは「存在しなければ何もしない（後方互換）」でしたが、**v0.5 では存在しないと
+  `Error: iroiro.toml not found in <cwd>.` で停止** します（必須化）。
+- **親ディレクトリへの遡りはしません**（git の `.git` 探索のような動作は未対応）。
 
 > ※ `iroiro.toml` を「入力 XML と同じディレクトリ」に置く誤解が多いですが、探索されるのは
 > **コマンドを実行したディレクトリ（cwd）** です。
@@ -117,6 +155,20 @@ cp iroiro.toml.example iroiro.toml
 | `max_chars` | 整数 | `>= 0` | 1エントリの最大文字数。超過時はスキップ。**`0` は正当値（= 全件スキップ）** なので注意 |
 | `retry_failed` | 真偽値 | `true` / `false` | resume 時に `failed` エントリを再翻訳対象に戻すか。デフォルト `false`（後方互換・v0.4 追加）。詳細は下記「[failed の再試行（v0.4）](#failed-の再試行v04)」節を参照 |
 
+#### LLM 挙動中核（v0.5 新規・必須）
+
+以下の 3 項目は v0.5 で追加された **必須** 項目です。`iroiro.toml` に必ず指定してください（CLI フラグでの上書き非対応）。カスタマイズ方法は「[LLM プロンプトのカスタマイズ（v0.5）](#llm-プロンプトのカスタマイズv05)」節を参照。
+
+| キー | 型 | 値域 | 意味 |
+|---|---|---|---|
+| `system_prompt` | 文字列 | 非空（strip 後も非空） | LLM へのシステムメッセージ全文（翻訳方針）。TOML の multiline string（`"""..."""`）で記述。`""` / `"   "` は拒否 |
+| `reject_phrases` | リスト（文字列） | 各要素が非空 `str`・`bool` 拒否 | LLM メタ返答（指示受け取り・作業宣言）のブラックリスト。`startswith` で判定。空リスト `[]` は許可（メタ返答チェック無効化）・重複は自動で `frozenset` 化して除去 |
+| `[iroiro.rec_hints]` | テーブル | 各キー非空・各値が非空 `str`・`bool` 拒否 | `<REC>` 別ヒント辞書。**テーブル自体は必須**（行が無いとエラー）・中身が空 `{}` は許可（REC ヒント無効化）。REC キーは `:` を含むため **必ず quoted key**（`"MGEF:FULL"`） |
+
+> **`bool` は拒否**: `reject_phrases = [True]` や `"MGEF:FULL" = true` のような書き間違いは
+> エラーになります（Python で `bool` が `int`/汎用型の事故を防ぐため・全要素で厳格型検証）。
+> 既存の数値フィールドが `bool` を拒否するのと対称な「厳格型検証」思想です。
+
 > **`max_chars = 0` に注意**: `0` は「全エントリをスキップ」の意味になります（`len(source) > 0` が
 > 常に真のため）。意図せず全件スキップにならないよう、基本的には `1` 以上を指定してください。
 
@@ -144,12 +196,159 @@ cp iroiro.toml.example iroiro.toml
 | 状況 | メッセージ例 |
 |---|---|
 | `--config PATH` が存在しない | `Error: config file not found: PATH` |
+| cwd に `iroiro.toml` が無い（v0.5） | `Error: iroiro.toml not found in <cwd>.  -> Run: cp iroiro.toml.example iroiro.toml  -> Or specify: --config /path/to/iroiro.toml`（実際のコードは `->` の前にスペース 2 個） |
 | TOML のシンタックスエラー | `Error: invalid TOML in iroiro.toml: <詳細>` |
+| `[iroiro]` セクション自体が無い（v0.5） | `Error: [iroiro] section is required in <パス>` |
 | `[iroiro]` がテーブルでない | `Error: [iroiro] must be a table, got <型> in <パス>` |
+| `system_prompt` 欠損（v0.5） | `Error: [iroiro] system_prompt is required in <パス>` |
+| `reject_phrases` 欠損（v0.5） | `Error: [iroiro] reject_phrases is required in <パス>` |
+| `[iroiro.rec_hints]` 欠損（v0.5） | `Error: [iroiro.rec_hints] table is required in <パス>` |
 | 型不一致（`timeout = "abc"` 等） | `Error: <キー> must be <期待型>, got <実際型> in <パス>` |
 | 値域エラー（`timeout = -1` 等） | `Error: <キー> must be > 0, got <値> in <パス>` |
+| `[iroiro.rec_hints]` の値が bool（v0.5） | `Error: rec_hints[<key>] must be non-empty str in <パス>`（`bool` / `int` 等の非 `str` 値） |
 
-> cwd に `iroiro.toml` が存在しない場合は **エラーにならず** 何も出力しません（後方互換）。
+> v0.4 までは cwd に `iroiro.toml` が存在しなくてもエラーになませんでしたが、**v0.5 では
+> 必須化されたため `Error: iroiro.toml not found` で停止** します（上記メッセージ参照）。
+
+---
+
+## `iroiro.toml` 必須化と移行（v0.5）
+
+v0.5 で LLM 挙動中核（`system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`）をコードから
+完全削除し `iroiro.toml` に移行した（案 α）。これに伴い **`iroiro.toml` 自体が全操作（`--dry-run` 含む）
+で必須** になりました。v0.4 までの「`iroiro.toml` 無しで内蔵デフォルトで動く」挙動は廃止されています。
+
+### 影響範囲（破壊的変更）
+
+v0.4 まで以下の操作が動いていた場面が、v0.5 では **エラーで停止** します:
+
+```bash
+uv run iroiro translate INPUT.xml --dry-run                       # iroiro.toml 無し → エラー
+uv run iroiro translate INPUT.xml --api-base http://... --api-key x  # iroiro.toml 無し → エラー
+uv run iroiro translate INPUT.xml --config custom.toml             # custom.toml に 3 新項目が無い → エラー
+```
+
+エラーメッセージは親切に「何をすればいいか」を表示します:
+
+```
+Error: iroiro.toml not found in <cwd>.
+  -> Run: cp iroiro.toml.example iroiro.toml
+  -> Or specify: --config /path/to/iroiro.toml
+```
+
+### 移行手順 — 新規ユーザー
+
+```bash
+# 1回だけ（雛形をコピー・v0.5 デフォルト値が全て入っている）
+cp iroiro.toml.example iroiro.toml
+# 必要なら編集（api_key / model / system_prompt 等）
+
+# 以降は今まで通り
+uv run iroiro translate INPUT.xml --dry-run
+uv run iroiro translate INPUT.xml --resume
+```
+
+`iroiro.toml.example` には v0.5 の全デフォルト（`system_prompt` 全文・`reject_phrases` 21語・
+`rec_hints` 18種）が入っているため、`cp` 直後は v0.4 までの挙動と同じ結果が得られます。
+
+### 移行手順 — 既存ユーザー（v0.4 以下からのアップグレード）
+
+**重要**: 既存の `iroiro.toml` を流用する場合は **3 新項目を手動で追記** してください。
+`cp iroiro.toml.example iroiro.toml` で上書きすると、既存の API 設定（エンドポイント・API キー等）が
+消えてしまいます。
+
+既存の `iroiro.toml` の `[iroiro]` セクション内に以下を追記します（全文は `iroiro.toml.example` の
+該当節をコピペしてください）:
+
+```toml
+# [iroiro] セクション内に追記:
+system_prompt  = """..."""                    # 必須・multiline string（全文は example を参照）
+reject_phrases = ["了解", "翻訳します"]        # 必須・list[str]（21語全文は example を参照）
+
+# [iroiro] の外（別テーブル）に追記・ quoted REC key 必須:
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。1〜4語程度の簡潔な表現。"
+"BOOK:DESC" = "書籍の本文。物語風の自然な日本語。"
+# ...（18種全文は example を参照）
+```
+
+追加し忘れると以下のエラーで停止します:
+
+```
+Error: [iroiro] system_prompt is required in iroiro.toml
+```
+
+### TOML 構文の注意
+
+- **`system_prompt`** は TOML の multiline string（`"""..."""`）で書きます。`"""` で始まり `"""`
+  で閉じるまでが1つの文字列になります。
+- **`[iroiro.rec_hints]`** 配下のキーは `MGEF:FULL` のように `:` を含むため、**必ず quoted key**
+  （`"MGEF:FULL"` のように `"` で囲む）で書いてください。TOML 1.0 の bare key は `[A-Za-z0-9_-]`
+  のみ許容するため、`:` を含むと parse error になります。
+- **`reject_phrases`** は `list[str]`。空リスト `[]` も許可（メタ返答チェック無効化）。重複は自動で
+  除去されます。
+
+---
+
+## LLM プロンプトのカスタマイズ（v0.5）
+
+v0.5 で LLM 挙動の中核 3 要素が `iroiro.toml` から編集可能になりました。翻訳方針の試行錯誤・
+モデル差し替え時のチューニング・未知 Skyrim REC 型への対応がコード編集なしで可能です。
+
+### `system_prompt` — 翻訳方針のカスタマイズ
+
+LLM へ送る system メッセージ全文です。TOML の multiline string で記述します:
+
+```toml
+[iroiro]
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+固有名詞・ <alias=...> 等のプレースホルダ・ <br>・改行文字・ # 記号は
+**そのまま維持** すること。
+簡潔で自然な日本語。**訳文のみ** 出力し、
+説明・マークダウン・ラベル・複数行は禁止。
+"""
+```
+
+編集後の反映確認は `--verbose` で system メッセージを観察するか、LLM の応答品質の変化で判断します。
+
+### `reject_phrases` — メタ返答判定のカスタマイズ
+
+LLM が「指示を受けた応答」（`了解しました`／`翻訳します`／`以下の通りです` 等）を返した場合に
+`failed` 扱いするためのブラックリストです。`text.strip()` が **完全一致** または **行頭一致**
+（`startswith`）するかで判定します。
+
+```toml
+[iroiro]
+# デフォルト（21語）から削ることも、独自の語句を追加することも自由
+reject_phrases = [
+  "了解", "了解しました", "了解いたしました",
+  "翻訳します", "以下の通りです",
+]
+```
+
+- **空リスト `[]`** を指定するとメタ返答チェックを無効化できます（誤検出が多い場合等）。
+- NPC セリフとして自然な「分かりました」「はい」「すみません」等は **デフォルトには含まれない**
+  （誤検出防止のため）。追加する場合は誤検出に注意してください。
+- 重複要素は自動で `frozenset` 化して除去されます。
+
+### `[iroiro.rec_hints]` — REC 型別ヒントのカスタマイズ
+
+`<REC>` 型（`MGEF:FULL` / `BOOK:DESC` 等）ごとに、user メッセージに追加するヒント文字列を指定します。
+LLM が REC 型の文脈（魔法の効果名・書籍本文・NPC セリフ 等）を理解しやすくなります。
+
+```toml
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。1〜4語程度の簡潔な表現。"
+"MGEF:DESC" = "魔法の効果の説明文。自然な日本語の文章。"
+"BOOK:DESC" = "書籍の本文。物語風の自然な日本語。"
+"INFO:RNAM" = "NPC のセリフ（会話の応答）。自然な会話文。"
+```
+
+- **必ず quoted key**（`"MGEF:FULL"`）で書く（`:` は TOML bare key に使えないため）。
+- **空テーブル**（`[iroiro.rec_hints]` ヘッダのみ・中身 `{}`）は許可（REC ヒント無効化）。
+- **未知の REC キー**（`"FOO:BAR"` 等・将来の Skyrim REC 型）も WARNING 無しで許可されます。
+- ヒントが無い REC 型の場合は source 文のみが user メッセージとして送られます（従来同等）。
 
 ---
 
@@ -170,6 +369,10 @@ uv tool install .
 
 LLM サーバーを起動せずに、入力 XML をパースして処理件数の集計だけを行う。実際の翻訳対象件数を
 事前に把握できる:
+
+> **v0.5 の注意**: `--dry-run` も `iroiro.toml` が必須です（設定検証が走るため）。事前に
+> `cp iroiro.toml.example iroiro.toml` を実行しておいてください。詳細は
+> 「[`iroiro.toml` 必須化と移行（v0.5）](#iroirotoml-必須化と移行v05)」節を参照。
 
 ```bash
 # sample XML は第三者著作物のため git 管理外。お手持ちの MOD XML で実行してください
@@ -464,7 +667,8 @@ v0.2.1 以降、LLM が post-processing 後も **空文字列** を返した場�
 
 > ⚠️ **過検出の可能性**: ブラックリストは **行頭一致（`startswith`）** で判定するため、
 > 「翻訳しますか？」等の NPC セリフが弾かれる可能性があります。実運用で問題になった場合は
-> `--reject-phrases` CLI フラグ（v0.3 以降）で調整可能、または issue でご報告ください。
+> `iroiro.toml` の `reject_phrases`（v0.5）で調整可能、または issue でご報告ください。
+> カスタマイズ方法は「[LLM プロンプトのカスタマイズ（v0.5）](#llm-プロンプトのカスタマイズv05)」節を参照。
 
 多数のエントリがこの理由で `failed` になる場合は、モデルの品質不足かプロンプト設定の問題。
 `--concurrency 1` で安定化するか、より指示追従性の高いモデルへの切り替えを検討する。

@@ -1,0 +1,28 @@
+# iroiro_v05_missing_rec_hints.toml — [iroiro.rec_hints] テーブル欠損（T138 / T147 用）
+#
+# v0.5 の LLM 挙動中核 3 項目のうち、[iroiro.rec_hints] テーブルだけ欠損。
+# WP-2 完了後に load_config が必須エラー（IroiroError）を送出することを検証する。
+# 期待されるエラーメッセージ（§2.8）: "[iroiro.rec_hints] table is required in <path>"
+#
+# 注意: 空テーブル（[iroiro.rec_hints] ヘッダのみ・中身なし）は許可される（T139）。
+# 本 fixture は「テーブル自体が存在しない」ケース。
+
+[iroiro]
+api_base      = "http://localhost:8081/v1"
+api_key       = "iroiro"
+model         = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+timeout       = 120.0
+concurrency   = 1
+max_chars     = 4000
+retry_failed  = false
+
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+"""
+
+reject_phrases = [
+  "了解", "了解しました", "了解いたしました",
+  "翻訳します",
+]
+
+# [iroiro.rec_hints] テーブルは意図的に書かない（必須エラー検証用）

@@ -151,12 +151,15 @@ post-processing 後が空文字列（または空白のみ）の場合、LLM が
 ### メタ返答チェック（ルール7）
 
 LLM が「指示を受けた応答」（了解しました／翻訳します／以下の通りです 等）を返した場合を検出する。
-`REJECT_PHRASES`（厳選ブラックリスト）に対し `text.strip()` が **完全一致** または
-**行頭一致**（`startswith`）するかで判定する。
+ブラックリスト（`PromptConfig.reject_phrases`・v0.5 で `iroiro.toml` から注入）に対し
+`text.strip()` が **完全一致** または **行頭一致**（`startswith`）するかで判定する。
 
 - **除外しない言葉**: `分かりました`、`はい`、`いいえ`、`すみません`、`ありがとうございます` 等
   （NPC セリフとして自然なため）。誤検出を防ぐため意図的にブラックリストを絞っている。
-- 将来拡張: ユーザーが新たに発見したパターンは `--reject-phrases` CLI フラグで追加可能（v0.3 以降）。
+- **v0.5 で toml 化**: ブラックリストは `iroiro.toml` の `reject_phrases` でカスタマイズ可能
+  （CLI フラグでの上書きは非対応・長文を shell history に残すリスクを避けるため）。詳細は
+  「[LLM 挙動中核の完全 toml 化（v0.5）](#llm-挙動中核の完全-toml-化v05)」節と
+  [詳細な使い方](usage.md#llm-プロンプトのカスタマイズv05) を参照。
 
 ---
 
@@ -394,6 +397,108 @@ Typer の `--flag/--no-flag` 構文で **3状態**（`True` / `False` / 未指�
 `--resume` 無しでは `progress.json` が読み込まれないため、`failed` を `pending` に戻す対象もありません。
 無意味な指定ですが、**exit 2 にする程のエラーではない** と判断しました。WARNING ログを出して通常実行を
 継続することで、ユーザーが `--resume` 忘れに気づけるようにしています（計画書 §11.4 / T129）。
+
+---
+
+## LLM 挙動中核の完全 toml 化（v0.5）
+
+v0.5 で LLM 挙動の中核 3 要素（`system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`）を
+`iroiro/translator.py` から **完全削除** し、`iroiro.toml` から注入する形に変更した（案 α）。
+設計判断と却下代替案の経緯は [実装計画 005 §2 / §3](plans/005-llm-config.md) を参照。
+
+### なぜ案 α（徹底版）か
+
+「内蔵も含めて toml で指定したい。ハードコードなし」というユーザー要望に対し、2 つの案がありました:
+
+- **案 α（徹底版）**: コードから定数を完全削除し `iroiro.toml` を必須化
+- **案 β（折衷版）**: コード内に予備デフォルトを残し、toml で上書き
+
+案 β は「コードの深いところに魔法の文字列が残る」ことで案 α の字義趣旨から外れます。配布物
+（`pip install` / `uv tool install`）状態でユーザーがプロンプトを編集できない問題を解決するため、
+案 α を採用しました。後方互換性の破れ（`iroiro.toml` 無しで実行するとエラー）はユーザー承認済みです。
+
+### 対象 / 非対象の分類
+
+**対象（コードから完全削除）**:
+
+| 旧定数 | 新しい注入元 |
+|---|---|
+| `_SYSTEM_PROMPT` | `PromptConfig.system_prompt`（`iroiro.toml`） |
+| `_REC_HINTS` | `PromptConfig.rec_hints`（`iroiro.toml` の `[iroiro.rec_hints]`） |
+| `REJECT_PHRASES` | `PromptConfig.reject_phrases`（`iroiro.toml`） |
+
+**非対象（v0.4 までの挙動を維持）**:
+
+- `api_base` / `api_key` / `model` / `timeout` / `concurrency` / `max_chars`（接続設定・環境固有・
+  元からハードコードでは無い）
+- `retry_failed`（実行制御フラグ・v0.4 互換のデフォルト `False`）
+
+この分類の基準は **「LLM 挙動の中核か・接続設定か」** です。接続設定は CLI フラグでの上書きを提供し、
+LLM 挙動中核は `iroiro.toml` のみ（CLI フラグ非対応）としました。
+
+### なぜ `iroiro.toml` を必須化したか（`--dry-run` 含む）
+
+案 α の中核です。LLM 挙動中核 3 項目の「内蔵デフォルト = 無」なので、`iroiro.toml` が無ければ
+`Translator` を構築できません。`--dry-run` でも `iroiro.toml` を必須にしたのは **一貫性** ため
+（計画書 §2.9）。`--dry-run` で toml エラーが出るのは「設定不備の早期発見」として有用です。
+
+### なぜ 3 新項目を必須にしたか
+
+「内蔵デフォルト = 無」の字義通りの実現です。`system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`
+のいずれかを省略すると、それぞれ `IroiroError` で停止します（CLI フラグ経由の上書きも提供しない）。
+ユーザーは `cp iroiro.toml.example iroiro.toml` で初期値が入ったファイルを取得できます。
+
+### なぜ `[iroiro]` セクション自体の欠損もエラーにしたか
+
+v0.4 までは `[iroiro]` セクションが無い場合 `{}` を返却していましたが、v0.5 では 3 新項目が必須のため
+空 `{}` では要件を満たせません（計画書 §2.8 / T149）。一貫性のため `[iroiro]` セクション自体が
+存在しない場合も `IroiroError` にしました。
+
+### なぜ `PromptConfig` dataclass か（`frozen=True` 無）
+
+`PromptConfig` は `system_prompt` / `rec_hints` / `reject_phrases` の 3 要素を保持する dataclass です。
+`Translator.__init__` に `prompts: PromptConfig` パラメータを追加して注入します。
+
+`frozen=True` は **付けません**。`rec_hints: dict[str, str]` が mutable な `dict` であるため、
+`frozen` でも完全な不変性が保証できないからです（Codex review 指摘・N1）。実用上 `PromptConfig` の
+再代入を防ぐだけで十分です。`reject_phrases` は `frozenset[str]` で完全不変にしています。
+
+### なぜ `_is_meta_response` / `_build_user_message` を純粋関数のままにしたか
+
+これらはモジュール関数のまま、`reject_phrases` / `rec_hints` を **引数で受ける形** に変更しました
+（インスタンスメソッド化しない）。これは **テスト容易性** ため（純粋関数のまま）。
+呼出側（`Translator` インスタンス）が `self._prompts.reject_phrases` / `self._prompts.rec_hints` を
+渡します。
+
+### なぜ `load_config()` で normalisation を一元化したか（CLI は thin）
+
+`load_config()` の戻り値で `reject_phrases` を `frozenset[str]` に重複除去して normalize し、
+`rec_hints` は `dict[str, str]` のまま返します。CLI 側はこの結果から `PromptConfig` を薄く組み立てる
+だけ（validation/normalisation は `load_config()` 内で完結）。これにより CLI を thin に保ち、
+`PromptConfig` 構築ロジックが分散しません（Codex review 指摘）。
+
+### 却下代替案
+
+#### 案 β（折衷版）: コード内に予備デフォルトを残す
+
+「コードの深いところに魔法の文字列が残る」ことで案 α の字義趣旨から外れるため却下。ユーザー承認済み
+（計画書 §3.1）。
+
+#### `reject_phrases` の「追加」モード
+
+内蔵デフォルト 21 語 + toml 追加、だと「内蔵デフォルト」がコードに残ります。案 α では完全 toml 指定
+なので追加モード不要。ユーザーが 21 語全部を toml に書く（`iroiro.toml.example` から `cp` すれば
+初期値が入る）（計画書 §3.2）。
+
+#### CLI フラグ `--system-prompt`
+
+長文を shell history に残すリスク・セキュリティ的に不適（`--api-key` と同じ理由）。toml のみ提供
+（計画書 §3.3）。
+
+#### `system_prompt` のプレースホルダ検証
+
+「`<alias=` を含まないなら WARNING」等の検証は over-engineering。非空 `str` のみ検証（ユーザー指定）
+（計画書 §3.4）。
 
 ---
 

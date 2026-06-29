@@ -1,0 +1,23 @@
+# iroiro_v05_empty_reject.toml — reject_phrases = []（空リスト・T136 用）
+#
+# reject_phrases に空リストを指定した場合、load_config はこれを正当値として受理する
+# （ユーザーが意図的にメタ返答チェックを無効化するケース）。
+# 空テーブル {} と異なり、空リスト [] も許容される（§2.5）。
+
+[iroiro]
+api_base      = "http://localhost:8081/v1"
+api_key       = "iroiro"
+model         = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+timeout       = 120.0
+concurrency   = 1
+max_chars     = 4000
+retry_failed  = false
+
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+"""
+
+reject_phrases = []
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。"

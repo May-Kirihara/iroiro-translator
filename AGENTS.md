@@ -19,11 +19,11 @@ BOM / CRLF / `standalone="yes"` 宣言 / 空要素 `<X></X>` 形式を保持し�
 
 ```bash
 uv sync                                        # 依存関係インストール（dev extras 含む）
-uv run pytest                                  # テスト（165件）
+uv run pytest                                  # テスト（191件）
 uv run pytest -k "xml_io"                      # 個別テスト
 uv run ruff check iroiro/ tests/               # lint
 uv run mypy iroiro                             # 型チェック
-uv run iroiro translate INPUT.xml --dry-run    # 動作確認（LLM 不要）
+uv run iroiro translate INPUT.xml --dry-run    # 動作確認（LLM 不要・v0.5 では iroiro.toml 必須）
 ```
 
 ---
@@ -52,7 +52,9 @@ iroiro-translator/
 ```
 
 > `iroiro.toml`（実体・個人環境依存の LLM 設定）は `.gitignore` 対象でコミットされません。
-> 各ユーザーが `cp iroiro.toml.example iroiro.toml` で作成します。
+> 各ユーザーが `cp iroiro.toml.example iroiro.toml` で作成します。**v0.5 では LLM 挙動中核**
+> （`system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`）も `iroiro.toml` に保持し、
+> `iroiro.toml` は `--dry-run` を含む **全操作で必須** になりました。
 
 ---
 
@@ -85,7 +87,7 @@ iroiro-translator/
 | 対象 | 理由 |
 |---|---|
 | `sample/` 配下 | 第三者著作物の MOD XML。`.gitignore` で除外済み。コミットしないこと |
-| `iroiro.toml`（実体） | 個人環境依存の LLM 設定（エンドポイント・API キー等）。`.gitignore` 対象・commit しない。`iroiro.toml.example`（雛形）は git 管理対象なので編集してよい |
+| `iroiro.toml`（実体） | 個人環境依存の LLM 設定（エンドポイント・API キー等・**v0.5 では LLM 挙動中核の `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` も含む・全操作で必須**）。`.gitignore` 対象・commit しない。`iroiro.toml.example`（雛形）は git 管理対象なので編集してよい |
 | `uv.lock` | uv が管理。手動編集しない（`uv sync` / `uv add` 経由でのみ更新） |
 | `docs/plans/`, `docs/handoff/` | 歴史的記録。変更が必要な場合は新規ファイル（`002-*.md` 等）で作成 |
 | テストの weakning / skip | 正当な理由がある場合のみ `@pytest.mark.skipif` を使用。安易な `pytest.skip` は禁止 |
@@ -112,6 +114,10 @@ uv run mypy iroiro                     # 型チェック クリーン
 - **CLI フラグ追加・変更時** → `README.md` / `docs/usage.md` を更新
 - **新モジュール追加時** → `docs/development.md` のモジュール構成を更新
 - **重大な変更** → `docs/plans/` に新規ファイル（`002-*.md` 等）で文書化
+- **LLM 挙動中核のデフォルト値編集時（v0.5）** → `system_prompt` / `reject_phrases` /
+  `[iroiro.rec_hints]` のデフォルト値を変える場合は `iroiro.toml.example` と該当 fixtures を
+  **同時に** 更新すること。実装コードにデフォルトは存在しない（v0.5 で完全削除）のでコード側の
+  同期は不要だが、テストヘルパー（`tests/conftest.py` の `default_prompt_config`）も確認すること
 
 ---
 
@@ -150,3 +156,5 @@ Conventional Commits 風のプレフィックスを使用:
 - [docs/handoff/003-config-file.md](docs/handoff/003-config-file.md) — v0.3 完了時の引き継ぎメモ・検証結果
 - [docs/plans/004-retry-failed.md](docs/plans/004-retry-failed.md) — v0.4 failed エントリ再試行（`--retry-failed` / `retry_failed`）の設計判断・却下代替案
 - [docs/handoff/004-retry-failed.md](docs/handoff/004-retry-failed.md) — v0.4 完了時の引き継ぎメモ・検証結果
+- [docs/plans/005-llm-config.md](docs/plans/005-llm-config.md) — v0.5 LLM プロンプト・エラー判定語句の完全 toml 化（`system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` の必須化・`PromptConfig` 注入）の設計判断・却下代替案
+- [docs/handoff/005-llm-config.md](docs/handoff/005-llm-config.md) — v0.5 完了時の引き継ぎメモ・検証結果

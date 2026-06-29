@@ -2,8 +2,22 @@
 #
 # 未知キー（unknown_key / another_unknown）は警告ログに出るが例外送出しない。
 # 既知キー（api_base）は返り値 dict に含まれる。T98 で両方を検証する。
+#
+# v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
+#   これらも WP-1 段階では未知キー扱い（WARNING + 無視）。WP-2 完了後に必須検証が走る。
+#   T98 は「未知キー（unknown_key / another_unknown）への WARNING」を検証するのが主眼で
+#   あるため、3 新項目の有無はテスト結果に影響しない。
 
 [iroiro]
 api_base       = "http://known:8080/v1"
 unknown_key    = "this should be ignored with a warning"
 another_unknown = 12345
+
+# === v0.5 新規（LLM 挙動中核・必須）===
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+"""
+reject_phrases = ["了解", "翻訳します"]
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。"

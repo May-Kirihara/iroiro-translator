@@ -1,9 +1,24 @@
 # iroiro_partial.toml — 一部項目のみ記述（T90 用）
 #
-# api_base と model だけ記述。他の項目（api_key / timeout / concurrency / max_chars）は
-# 書かれていないため、load_config の戻り値 dict に含まれない（呼出側で内蔵デフォルト
-# に落ちる）。T90 では「その項目だけ反映され、残りは含まれない」ことを検証する。
+# api_base と model だけ記述。他の接続設定項目（api_key / timeout / concurrency /
+# max_chars）は書かれていないため、load_config の戻り値 dict に含まれない
+# （呼出側で内蔵デフォルトに落ちる）。T90 では「その項目だけ反映され、残りは含まれない」
+# ことを検証する。
+#
+# v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
+#   これらは WP-1 段階では未知キー扱い（WARNING + 無視）で result dict に含まれない。
+#   WP-2 完了後に必須検証が走り result dict に含まれるようになる。
 
 [iroiro]
 api_base = "http://partial:8080/v1"
 model    = "partial-model"
+
+# === v0.5 新規（LLM 挙動中核・必須）===
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+"""
+reject_phrases = ["了解", "翻訳します"]
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。"
+"BOOK:DESC" = "書籍の本文。"

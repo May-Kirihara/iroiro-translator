@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from iroiro.errors import IroiroError
-from iroiro.translator import ApiConfig
+from iroiro.translator import ApiConfig, PromptConfig
 
 _logger = logging.getLogger(__name__)
 
@@ -22,6 +22,9 @@ class RunConfig:
         input_path: 入力XMLのパス。
         output_path: 出力XMLのパス。
         api: API 設定。
+        prompts: LLM 挙動中核設定（v0.5 追加）。``system_prompt`` /
+            ``rec_hints`` / ``reject_phrases`` を含む ``PromptConfig``。
+            ``iroiro.toml`` から構築される。
         resume: ``--resume`` フラグ。progress.json を読んで続きから。
         dry_run: ``--dry-run`` フラグ。LLM を呼ばず件数表示のみ。
         verbose: ``-v`` フラグ。詳細ログ。
@@ -36,6 +39,7 @@ class RunConfig:
     input_path: Path
     output_path: Path
     api: ApiConfig
+    prompts: PromptConfig
     resume: bool
     dry_run: bool
     verbose: bool
@@ -49,7 +53,7 @@ class RunConfig:
 
 
 def load_config(explicit_path: Path | None) -> dict[str, object]:
-    """``iroiro.toml`` を読んで ``[iroiro]`` セクションの dict を返す。
+    """``iroiro.toml`` を読んで ``[iroiro]`` セクションの dict を返す（v0.5）。
 
     Args:
         explicit_path: ``--config`` で明示指定されたパス。``None`` なら cwd の
@@ -57,15 +61,22 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
 
     Returns:
         ``[iroiro]`` テーブルの dict（**型検証・値域検証済み**）。
-        ファイル無し（``--config`` 無指定時のみ）・``[iroiro]`` セクション無しは
-        ``{}`` を返す。記述されていない項目はキーに含まれない（呼出側で
-        内蔵デフォルトに落ちる）。
+        v0.5 では ``system_prompt`` / ``reject_phrases`` / ``rec_hints`` の
+        3 新項目が必須（``reject_phrases`` は ``frozenset[str]`` に normalize 済み・
+        ``rec_hints`` は ``dict[str, str]`` のまま）。
 
     Raises:
-        IroiroError: ファイル無し（``--config`` 明示時のみ）・パースエラー・
-            型エラー・値域エラー・``[iroiro]`` がテーブルでない。
+        IroiroError: ファイル無し・``[iroiro]`` セクション無し・3 新項目のいずれか欠損・
+            パースエラー・型エラー・値域エラー・``[iroiro]`` がテーブルでない・
+            ``[iroiro.rec_hints]`` がテーブルでない。
 
-    検証ルール（Plan 003 §4.5.1）:
+    v0.5 の破壊的変更（Plan 005 §2.2 / §2.9）:
+
+    - ファイル無し（``--config`` 無指定時）は ``{}`` 返却ではなく ``IroiroError``
+    - ``[iroiro]`` セクション無しも ``{}`` 返却ではなく ``IroiroError``
+    - ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]`` は必須
+
+    検証ルール（Plan 003 §4.5.1 + Plan 005 §2.5）:
 
         ============  =======  ===========  =====================================
         キー          型       値域          備考
@@ -76,11 +87,15 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
         ``timeout``   ``float`` ``> 0``      ``int`` 許容・``bool`` 拒否
         ``concurrency`` ``int`` ``>= 1``     ``bool`` 拒否
         ``max_chars`` ``int``  ``>= 0``      0 は正当値（全件スキップ）
+        ``retry_failed`` ``bool`` 厳格 bool  ``int`` 拒否
+        ``system_prompt`` ``str`` 非空       strip 後も非空・``""`` / ``"   "`` 拒否
+        ``reject_phrases`` ``list[str]`` 各要素非空  ``[]`` 許可・重複は ``frozenset`` 化
+        ``rec_hints`` ``dict[str, str]`` 各キー/値非空  ``{}`` 許可・``bool`` 拒否
         ============  =======  ===========  =====================================
 
     ``bool`` は全ての数値フィールドで拒否（Python ``bool ⊂ int`` 事故防止）。
     未知キー混在時は ``WARNING`` ログを出すが **例外送出しない**・既知キーは
-    返り値に含める（前方互換のため）。
+    返り値に含める（前方互換のため）。未知 REC キーは ``WARNING`` 無しで許可。
     """
     # ---- 1. パス解決 ------------------------------------------------------
     if explicit_path is not None:
@@ -90,8 +105,13 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
     else:
         path = Path.cwd() / "iroiro.toml"
         if not path.is_file():
-            # cwd に iroiro.toml 無し → 後方互換（何もしない・警告も出さない）
-            return {}
+            # v0.5（Plan 005 §2.2）: cwd に iroiro.toml 無し → IroiroError
+            # （v0.4 までは ``{}`` 返却で後方互換だったが破壊的変更）
+            raise IroiroError(
+                f"iroiro.toml not found in {Path.cwd()}."
+                "  -> Run: cp iroiro.toml.example iroiro.toml"
+                "  -> Or specify: --config /path/to/iroiro.toml"
+            )
 
     # ---- 2. TOML パース --------------------------------------------------
     try:
@@ -101,9 +121,10 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
         raise IroiroError(f"invalid TOML in {path}: {e}") from e
 
     # ---- 3. [iroiro] テーブル取得 ----------------------------------------
+    # v0.5（Plan 005 §2.2 / §4.5 T149）: ``[iroiro]`` セクション自体が存在しない
+    # 場合も ``IroiroError``（v0.4 までは ``{}`` 返却だったが破壊的変更）。
     if "iroiro" not in data:
-        # [iroiro] セクション無し → 空扱い（警告なし・Plan 003 §4.5.2/T94）
-        return {}
+        raise IroiroError(f"[iroiro] section is required in {path}")
     iroiro_table: object = data["iroiro"]
     if not isinstance(iroiro_table, dict):
         raise IroiroError(
@@ -115,18 +136,30 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
     for key, raw in iroiro_table.items():
         validator = _VALIDATORS.get(key)
         if validator is None:
-            # 未知キー: WARNING ログのみ・例外送出しない（前方互換・T98）
+            # 未知キー: WARNING ログのみ・例外送出しない（前方互換・T98 / T150）
             _logger.warning(
                 "unknown key %r in [iroiro] of %s — ignored", key, path
             )
             continue
         result[key] = validator(raw, key, path)
 
+    # ---- 5. v0.5 必須チェック（3 新項目） --------------------------------
+    # Plan 005 §2.2: ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]``
+    # は必須。未知キー扱いで無視された場合も result に含まれないため、ここで改めて
+    # 必須チェックする（T133 / T137 / T138）。
+    if "system_prompt" not in result:
+        raise IroiroError(f"[iroiro] system_prompt is required in {path}")
+    if "reject_phrases" not in result:
+        raise IroiroError(f"[iroiro] reject_phrases is required in {path}")
+    # ``rec_hints`` は ``[iroiro.rec_hints]`` サブテーブルとして別途格納される。
+    # ``data["iroiro"]`` に ``"rec_hints"`` キーが存在するかで判定する（Codex review
+    # 5回目 notes 3）: ``rec_hints = {}`` も ``[iroiro.rec_hints]`` も ``tomllib``
+    # 後は ``data["iroiro"]["rec_hints"]`` の nested dict になるため、``None`` か
+    # どうかでテーブル存在判定する。
+    if iroiro_table.get("rec_hints") is None:
+        raise IroiroError(f"[iroiro.rec_hints] table is required in {path}")
+
     # 設定が1件以上読み込まれた場合、INFO ログで出力（N3）。
-    # ファイル無し・[iroiro] セクション無し・未知キーのみの場合は空 dict なので
-    # このログは出ず、従来通りの静寂を保つ（後方互換）。
-    # configure_logging は non-verbose 時にレベル INFO に設定するため、
-    # デフォルト（-v 無し）でも本ログは表示される。
     if result:
         _logger.info("Loaded iroiro.toml from %s (%d keys)", path, len(result))
     return result
@@ -208,7 +241,106 @@ def _validate_bool(v: object, key: str, path: Path) -> bool:
     return v
 
 
-# key -> validator（戻り値は検証済みの str/int/float/bool・dict[str, object] に代入可能）
+# ---------------------------------------------------------------------------
+# v0.5 新規 validator（system_prompt / reject_phrases / rec_hints・Plan 005 §2.5）
+# ---------------------------------------------------------------------------
+
+
+def _validate_system_prompt(v: object, key: str, path: Path) -> str:
+    """``system_prompt`` の厳格 ``str`` 検証（v0.5・Plan 005 §2.5）。
+
+    制約:
+      - ``str`` 型のみ許可（``int`` / ``bool`` 拒否）
+      - 非空（``""`` 拒否）
+      - strip 後も非空（``"   "`` 拒否）
+
+    戻り値は ``str`` のまま（normalize 無し）。``PromptConfig.system_prompt`` に代入可能。
+    """
+    if isinstance(v, bool) or not isinstance(v, str):
+        raise IroiroError(
+            f"{key} must be str, got {type(v).__name__} in {path}"
+        )
+    if v.strip() == "":
+        raise IroiroError(
+            f"{key} must be non-empty str in {path}"
+        )
+    return v
+
+
+def _validate_reject_phrases(
+    v: object, key: str, path: Path
+) -> frozenset[str]:
+    """``reject_phrases`` の ``list[str]`` 検証と ``frozenset[str]`` normalize（v0.5）。
+
+    制約:
+      - ``list`` 型のみ許可（文字列スカラー拒否）
+      - 各要素は ``str`` のみ（``int`` / ``bool`` 拒否・``bool ⊂ int`` 事故防止）
+      - 各要素は非空（``""`` 拒否）
+      - 空リスト ``[]`` は許可（メタ返答チェック無効化・T136）
+
+    戻り値は ``frozenset[str]``（重複は自動で除去される・T135）。
+    ``PromptConfig.reject_phrases`` に直接代入可能。
+    """
+    if not isinstance(v, list):
+        raise IroiroError(
+            f"{key} must be a list in {path}"
+        )
+    normalized: set[str] = set()
+    for i, elem in enumerate(v):
+        # ``bool ⊂ int`` 事故防止: ``isinstance(True, str)`` は False なので
+        # ``bool`` は ``str`` 検査で弾かれるが、明示的に拒否する（N2・厳格型検証思想）
+        if isinstance(elem, bool) or not isinstance(elem, str):
+            raise IroiroError(
+                f"{key}[{i}] must be non-empty str in {path}"
+            )
+        if elem == "":
+            raise IroiroError(
+                f"{key}[{i}] must be non-empty str in {path}"
+            )
+        normalized.add(elem)
+    return frozenset(normalized)
+
+
+def _validate_rec_hints(
+    v: object, key: str, path: Path
+) -> dict[str, str]:
+    """``[iroiro.rec_hints]`` の ``dict[str, str]`` 検証（v0.5・Plan 005 §2.5）。
+
+    制約:
+      - ``dict`` 型のみ許可（文字列等のスカラー拒否・T152）
+      - 各キーは非空 ``str``（T140）
+      - 各値は ``str`` のみ（``int`` / ``bool`` 拒否・T153）
+      - 各値は非空（``""`` 拒否・T140）
+      - 空テーブル ``{}`` は許可（REC ヒント無効化・T139）
+      - 未知 REC キー（``"FOO:BAR"`` 等・quoted key 必須）は WARNING 無しで許可（T141 / T151）
+
+    戻り値は ``dict[str, str]`` のまま（``PromptConfig.rec_hints`` に代入可能）。
+    """
+    if not isinstance(v, dict):
+        raise IroiroError(
+            f"[iroiro.rec_hints] must be a table, got {type(v).__name__} in {path}"
+        )
+    normalized: dict[str, str] = {}
+    for k, val in v.items():
+        if not isinstance(k, str) or k == "":
+            raise IroiroError(
+                f"rec_hints key must be non-empty in {path}"
+            )
+        # ``bool ⊂ int`` 事故防止: ``isinstance(True, str)`` は False だが、
+        # 明示的に ``bool`` を拒否（N2・厳格型検証思想）
+        if isinstance(val, bool) or not isinstance(val, str):
+            raise IroiroError(
+                f"rec_hints[{k!r}] must be non-empty str in {path}"
+            )
+        if val == "":
+            raise IroiroError(
+                f"rec_hints[{k!r}] must be non-empty str in {path}"
+            )
+        normalized[k] = val
+    return normalized
+
+
+# key -> validator（戻り値は検証済みの str/int/float/bool/frozenset/dict・dict[str, object] に代入可能）
 _VALIDATORS: dict[str, Callable[[object, str, Path], object]] = {
     "api_base": _validate_str_nonempty,
     "api_key": _validate_str_allow_empty,
@@ -217,4 +349,7 @@ _VALIDATORS: dict[str, Callable[[object, str, Path], object]] = {
     "concurrency": _validate_concurrency,
     "max_chars": _validate_max_chars,
     "retry_failed": _validate_bool,  # v0.4 追加
+    "system_prompt": _validate_system_prompt,  # v0.5 追加
+    "reject_phrases": _validate_reject_phrases,  # v0.5 追加
+    "rec_hints": _validate_rec_hints,  # v0.5 追加
 }

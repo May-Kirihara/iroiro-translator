@@ -40,6 +40,7 @@ from iroiro.progress import (
 from iroiro.translator import (
     DEFAULT_SKIP_RECORDS,
     ApiConfig,
+    PromptConfig,
     Translator,
     _parse_skip_records,
     is_translation_needed,
@@ -111,7 +112,7 @@ def translate(
         "--config",
         help=(
             "iroiro.toml 設定ファイルのパス（未指定時は cwd の iroiro.toml を探す・"
-            "存在しなければ内蔵デフォルトを使用）"
+            "v0.5 では iroiro.toml は必須: 無い場合はエラーで停止）"
         ),
     ),
     api_base: str | None = typer.Option(
@@ -195,10 +196,10 @@ def translate(
 
     output_path = output if output is not None else _default_output_path(input)
 
-    # iroiro.toml 読込（Plan 003 §4）:
+    # iroiro.toml 読込（Plan 003 §4 / Plan 005 §2.2）:
     # - ``--config`` 明示時: 指定ファイルのみ読む（存在しない → IroiroError → exit 2）
-    # - 未指定時: cwd の iroiro.toml を探す（存在しなければ空 dict・後方互換）
-    # - パース/型/値域エラーは IroiroError → exit 2
+    # - 未指定時: cwd の iroiro.toml を探す（v0.5 では存在しないと IroiroError）
+    # - パース/型/値域エラー・3 新項目欠損は IroiroError → exit 2
     try:
         file_cfg = load_config(config)
     except IroiroError as e:
@@ -206,6 +207,15 @@ def translate(
         # タグと解釈されて消失するのを防ぐ（N1）。
         iroiro_logging.print(f"[red]Error:[/red] {escape(str(e))}")
         raise typer.Exit(code=2) from e
+
+    # v0.5（Plan 005 §2.6）: ``PromptConfig`` を ``load_config()`` 結果から構築。
+    # validation/normalization は ``load_config()`` 側で完結しているため、
+    # CLI 側は薄い組み立てのみ（Codex review 指摘）。3 新項目は必須チェック済み。
+    prompts = PromptConfig(
+        system_prompt=cast(str, file_cfg["system_prompt"]),
+        rec_hints=cast(dict[str, str], file_cfg["rec_hints"]),
+        reject_phrases=cast(frozenset[str], file_cfg["reject_phrases"]),
+    )
 
     # 優先順位（Plan 003 §4.4）: CLI フラグ（非 None）＞ iroiro.toml ＞ 内蔵デフォルト
     api_cfg = ApiConfig(
@@ -236,6 +246,7 @@ def translate(
         input_path=input,
         output_path=output_path,
         api=api_cfg,
+        prompts=prompts,
         resume=resume,
         dry_run=dry_run,
         verbose=verbose,
@@ -352,7 +363,7 @@ async def _run(cfg: RunConfig) -> None:
         return
 
     # ---- 5. 翻訳 ----
-    translator = Translator(cfg.api)
+    translator = Translator(cfg.api, cfg.prompts)
     try:
         await _translate_all(translator, entries, writer, cfg)
     finally:
