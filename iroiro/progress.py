@@ -8,6 +8,8 @@ Plan §5.8 / §6.5 で規定される ``ProgressWriter`` と ``ProgressData`` �
     * ファイル命名: ``<input>.iroiro-progress.json``（``<input>`` は入力XMLのフルパス）。
     * ``input_path`` メタ情報: progress_path でなく入力XMLのパスを記録する（Plan §5.8 v0.3）。
     * ``input_hash`` 不一致 / JSON decode error は ``ValueError`` で停止する（自動修復しない）。
+    * ``skip_records_fingerprint`` 不一致は v0.6.1 で WARNING ログのみに緩和（resume 継続）。
+      ``skip_records`` が変わっても ``entries`` と処理結果の整合性は崩れないため。
 """
 
 from __future__ import annotations
@@ -15,9 +17,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -77,7 +82,8 @@ class ProgressWriter:
     同一インスタンス内の ``_data`` を更新しつつ ``_flush`` で原子的書き込みを行う。
 
     再開: ``load_existing`` で既存ファイルを読み込む。
-    ファイル不在は ``None``。JSON decode error / hash 不一致は ``ValueError``。
+    ファイル不在は ``None``。JSON decode error / ``input_hash`` 不一致は ``ValueError``。
+    ``skip_records_fingerprint`` 不一致は v0.6.1 で WARNING ログのみに緩和（resume 継続）。
     """
 
     def __init__(
@@ -172,9 +178,14 @@ class ProgressWriter:
             ``ProgressData``。ファイルが存在しない場合は ``None``。
 
         Raises:
-            ValueError: JSON decode error、``input_hash`` が一致しない場合、
-                または ``skip_records_fingerprint`` が現在の設定と一致しない場合。
+            ValueError: JSON decode error、または ``input_hash`` が一致しない場合。
                 自動修復は行わず、ユーザーにファイル削除を促すことを想定。
+
+        Note:
+            ``skip_records_fingerprint`` が現在の設定と一致しない場合は v0.6.1 で
+            WARNING ログのみに緩和された（resume を継続）。``skip_records`` が変わっても
+            ``entries`` と処理結果の整合性は崩れないため。全件再処理したい場合は
+            ユーザーが手動で ``progress.json`` を削除する。
         """
         if not self._path.exists():
             return None
@@ -205,14 +216,20 @@ class ProgressWriter:
 
         # v0.2: skip_records_fingerprint 検証（Plan §5.4）。
         # v0.1 形式の progress.json は同フィールドを持たないため ``""`` と解釈する。
-        # 現在の fingerprint と一致しない場合は ValueError で停止（input_hash と同じパターン）。
+        # v0.6.1: 不一致時は ValueError（停止）ではなく WARNING ログのみ出して resume を
+        # 継続する（ユーザー実機フィードバック・resume 継続性優先）。skip_records が変わって
+        # も progress.json の entries と実際の処理結果の整合性は崩れないため。``input_hash``
+        # 不一致は引き続き ValueError（data integrity 直結）。
         existing_skip_fp = str(raw.get("skip_records_fingerprint", ""))
         if existing_skip_fp != self._skip_records_fingerprint:
-            raise ValueError(
-                f"skip_records fingerprint mismatch: "
-                f"progress.json has {existing_skip_fp!r}, "
-                f"current skip_records is {self._skip_records_fingerprint!r}. "
-                f"Please remove {self._path} if skip records have changed."
+            _logger.warning(
+                "skip_records fingerprint mismatch: progress.json has %r, "
+                "current skip_records is %r. "
+                "Resuming with the current skip_records. "
+                "To reprocess all entries, remove %s.",
+                existing_skip_fp,
+                self._skip_records_fingerprint,
+                self._path,
             )
 
         raw_entries = raw.get("entries", {})

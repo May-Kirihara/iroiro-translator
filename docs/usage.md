@@ -342,9 +342,10 @@ v0.5 まで以下の操作が動いていた場面が、v0.6 では **エラー�
 uv run iroiro translate INPUT.xml --dry-run
 # Error: [iroiro] skip_records is required in iroiro.toml
 
-# 2. v0.5 までの progress.json を --resume すると fingerprint 不一致で停止
+# 2. v0.5 までの progress.json を --resume すると WARNING が出る（resume は継続・v0.6.1 で緩和）
 uv run iroiro translate INPUT.xml --resume
-# skip_records を変更したため resume を中止します（fingerprint 不一致・安全側の挙動）
+# WARNING: skip_records fingerprint mismatch: ... Resuming with the current skip_records.
+# （v0.6 までは停止していましたが v0.6.1 で WARNING のみに緩和されました）
 
 # 3. --no-skip-default-records フラグが未知オプションに（廃止）
 uv run iroiro translate INPUT.xml --no-skip-default-records
@@ -421,11 +422,22 @@ toml の `skip_records` を **完全置換** するセマンティクスに変�
 > （13件スキップ）を意味しましたが、v0.6 では「LCTN:FULL のみ」（1件スキップ）を意味します。
 > 移行時はご注意ください。
 
-### `progress.json` の fingerprint 不整合（resume 時停止）
+### `progress.json` の fingerprint 不整合（v0.6.1 で WARNING に緩和）
 
 v0.5 までの `progress.json` は `skip_records_fingerprint` に 12 件の fingerprint を持っています。
-v0.6 で 14 件に変わるため、`--resume` 時に fingerprint 不一致で停止します（仕様通りの安全側の挙動・
-`input_hash` 不一致と同じパターン）。エラーメッセージに従い `progress.json` を削除して再実行してください:
+v0.6 で 14 件に変わるため、`--resume` 時に fingerprint が不一致になりますが、**v0.6.1 からは
+停止せず WARNING ログを出力して resume を継続します**（`input_hash` 不一致とは異なる挙動）。
+skip_records が変わっても `progress.json` の entries と実際の処理結果の整合性は崩れないため、
+resume 継続性を優先しました（ユーザー実機フィードバック）:
+
+```
+WARNING: skip_records fingerprint mismatch: progress.json has '...',
+current skip_records is '...'. Resuming with the current skip_records.
+To reprocess all entries, remove <progress.json path>.
+```
+
+**全件再処理したい場合**（例: 新しい 14 件リストでスキップ対象を見直したい等）のみ、
+手動で `progress.json` を削除して再実行してください:
 
 ```bash
 rm path/to/your_mod.xml.iroiro-progress.json
@@ -617,7 +629,7 @@ uv run iroiro translate path/to/your_mod.xml --resume
 - 既存 `entries` の index はスキップ（`state=translated`、訳文を再利用）
 - 既存 `failed` の index は再試行せず保持（`state=failed`、元の `<Dest>` を保持）※ デフォルト動作・後述の `--retry-failed` で変更可能
 - `input_hash`（SHA256）が不一致 → 停止（入力 XML を変更した場合）
-- `skip_records_fingerprint` が不一致 → 停止（`skip_records` / `--skip-records` を変更した場合）（v0.2・v0.6 で fingerprint 値が 12件→14件に変更）
+- `skip_records_fingerprint` が不一致 → **WARNING ログのみ（resume 継続・exit code 0）**（`skip_records` / `--skip-records` を変更した場合）（v0.2・v0.6 で fingerprint 値が 12件→14件に変更・**v0.6.1 で停止→WARNING に緩和**）
 - JSON decode error → 停止（ユーザーにファイル削除を促す）
 
 ### failed の再試行（v0.4）
@@ -771,10 +783,12 @@ uv run iroiro translate INPUT.xml \
 - 大文字小文字は区別しない（`hdpt:full` は `HDPT:FULL` に正規化される）。
 - 重複指定は自動で排除される（`frozenset` 化）。
 - `skip_records_fingerprint`（SHA256 of sorted canonical）が `progress.json` に保存され、
-  `--resume` 時に検証される。`skip_records` を変更した場合は `ValueError` で停止する
-  （`input_hash` と同じパターン・安全側）。
-- **v0.5 までの `progress.json` を v0.6 で resume する場合は fingerprint 不一致で停止します**
-  （12件 → 14件の変更のため）。`progress.json` を削除して再実行してください。
+  `--resume` 時に検証される。`skip_records` を変更した場合は **WARNING ログのみ出力して resume を継続**
+  （v0.6.1 で緩和・`input_hash` とは異なり停止しない・skip_records が変わっても entries と処理結果の
+  整合性は崩れないため）。v0.6 までは `ValueError` で停止していた。
+- **v0.5 までの `progress.json` を v0.6 以降で resume すると fingerprint 不一致の WARNING が出ますが
+  resume は継続します**（12件 → 14件の変更のため）。全件再処理したい場合のみ `progress.json` を削除して
+  再実行してください。
 - 空集合（`--skip-records ""` または `skip_records = []`）の fingerprint は `""` を返す特例
   （v0.1 形式 `progress.json` との互換性のため）。
 

@@ -194,8 +194,10 @@ LLM が「指示を受けた応答」（了解しました／翻訳します／�
   クラッシュ時に本ファイルが破損しない（残存 `tmp` は次回実行時に上書きされる）。
 - **`input_hash` 検証**: 入力 XML を変更した後に `--resume` すると SHA256 が合わずに停止する。
   安全側の挙動。メッセージに従い進捗ファイルを削除して再実行する。
-- **`skip_records_fingerprint` 検証**（v0.2）: `--no-skip-default-records` / `--skip-records` を
-  変更した後に `--resume` すると fingerprint が合わずに停止する。`input_hash` と同じパターン。
+- **`skip_records_fingerprint` 検証**（v0.2・**v0.6.1 で緩和**）: `skip_records`（`iroiro.toml`）または
+  `--skip-records` を変更した後に `--resume` すると fingerprint が合わず **WARNING ログ** を出力する（resume は継続・exit code 0）。
+  `input_hash` とは異なり停止しない（skip_records が変わっても `progress.json` の entries と実際の処理結果の
+  整合性は崩れないため）。v0.6 までは `ValueError` で停止していた。
 - **JSON decode error**: 自動修復せず停止。ユーザーにファイル削除を促す。
 
 ---
@@ -278,16 +280,25 @@ REC skip と言語 skip が **重複カウントされない** よう、dry-run 
 ### `progress.json` の `skip_records_fingerprint` 検証
 
 スキップリストは入力 XML と独立に変更可能なので、`progress.json` に fingerprint を保存し、
-`--resume` 時に検証する（`input_hash` と同じパターン）:
+`--resume` 時に検証する。**v0.6.1 で挙動を緩和** し、不一致時は `ValueError`（停止）ではなく
+WARNING ログのみ出力して resume を継続する（`input_hash` とは異なる挙動）。理由は、
+skip_records が変わっても `progress.json` の entries と実際の処理結果の整合性は崩れないため
+（ユーザー実機フィードバック・resume 継続性優先）。
 
 - fingerprint は `compute_skip_records_fingerprint(skip_records)` で計算
 - **空集合は `""` を返す特例**（v0.1 形式 `progress.json` との互換性のため）
 - 非空は `SHA256("\n".join(sorted(skip_records)))` の hex
-- 不一致時は `ValueError` で停止し、ユーザーに `progress.json` の削除を促す
+- 不一致時は WARNING ログを出力（resume は継続・exit code 0）。全件再処理したい場合は
+  ユーザーが手動で `progress.json` を削除して再実行する
+
+> **v0.6.1 での変更点**: v0.6 までは不一致時 `ValueError` で停止していた。実機運用で
+> skip_records の微調整（12件→14件の拡充等）が resume の妨げになることが多く、data integrity に
+> 直結しない fingerprint 検証は WARNING に緩和した。**`input_hash` 不一致は引き続き
+> `ValueError` で停止する**（data integrity 直結のため・`input_hash` 関連の記述は本節の対象外）。
 
 v0.1 で作成された `progress.json`（fingerprint フィールド無し = `""`）は:
 - `--no-skip-default-records` 指定時（空 set = `""`）→ resume 成功
-- デフォルト動作（`DEFAULT_SKIP_RECORDS` = 非`""`）→ fingerprint 不一致で停止（安全側）
+- デフォルト動作（`DEFAULT_SKIP_RECORDS` = 非`""`）→ WARNING ログを出力しつつ resume 継続
 
 ---
 

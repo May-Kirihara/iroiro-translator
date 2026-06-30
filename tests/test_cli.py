@@ -2,7 +2,7 @@
 
 v0.2 追加: T64-T67（``--no-skip-default-records`` / ``--skip-records``）,
 T69-T70（dry-run 重複カウント防止・REC skip の original_dest 保持）,
-T82（CLI レベルの --resume fingerprint mismatch・exit code 2）。
+T82（CLI レベルの --resume fingerprint mismatch・v0.6.1 で WARNING + 継続に緩和）。
 
 対象モジュール: `iroiro/cli.py`、`iroiro/config.py`
 シグネチャ契約（Plan §6.6 / §6.7）:
@@ -40,7 +40,7 @@ CLI インターフェース（Plan §5.4 / §5.2）:
   - v0.2 T64-T67: --no-skip-default-records / --skip-records の動作
   - v0.2 T69: dry-run で REC skip と言語 skip が重複カウントされない
   - v0.2 T70: REC skip されたエントリの <Dest> が original_dest を保持
-  - v0.2 T82: --resume 時の fingerprint mismatch で exit code 2
+  - v0.2 T82: --resume 時の fingerprint mismatch は WARNING ログ + exit 0 で継続（v0.6.1 で緩和）
 """
 from __future__ import annotations
 
@@ -720,22 +720,32 @@ def test_T70_rec_skipped_entry_preserves_original_dest(
     assert "Fire Damage" not in translated_sources
 
 
-def test_T82_cli_resume_fingerprint_mismatch_exit_code_2(
+def test_T82_cli_resume_fingerprint_mismatch_warns_and_continues(
     skip_records_xml: Path,
     tmp_path: Path,
     patch_translator,
+    caplog: pytest.LogCaptureFixture,
     v05_default_config,
 ) -> None:
-    """T82: CLI レベルで skip_records を変更して --resume → exit code 2 で停止。
+    """T82: CLI レベルで skip_records を変更して --resume → WARNING ログ + exit 0 で継続。
 
+    v0.6.1 で ``ValueError``（exit 2 停止）から WARNING ログのみ（resume 継続）に緩和。
     Plan §6.2c T82: T77 は ProgressWriter 単体レベル・T82 は CLI 統合レベル。
-    progress.json に保存された skip_records_fingerprint が現在の skip_records と
-    異なる場合、CLI は _apply_existing 呼出前に ValueError を catch して exit code 2
-    で停止する（input_hash mismatch と同じパターン・v0.1 T21 の CLI 版）。
+    ``skip_records`` が変わっても ``progress.json`` の ``entries`` と処理結果の整合性は
+    崩れないため、警告のみ出して resume を続行する（ユーザー実機フィードバック・
+    resume 継続性優先）。``input_hash`` mismatch は引き続き exit 2（data integrity 直結）。
+
+    検証:
+      - exit code 0（継続）
+      - 出力ファイルが生成される（resume 継続）
+      - WARNING ログに "fingerprint mismatch" が含まれる
+      - entry[0] は progress.json の既存訳を再利用（resume が継続した証拠）
     """
+    import logging
     import shutil
 
     from iroiro.progress import compute_input_hash, compute_skip_records_fingerprint
+    from iroiro.xml_io import parse_xml
 
     # skip_records.xml を tmp_path にコピー（fixtures を汚さないため）
     tmp_input = tmp_path / "skip_records.xml"
@@ -764,21 +774,41 @@ def test_T82_cli_resume_fingerprint_mismatch_exit_code_2(
     patch_translator(handler=lambda src, rec: f"【訳】{src}")
 
     # --skip-records "" で異なる skip_records（空 set）を指定して --resume
-    # → fingerprint が "" になり不一致 → exit code 2
+    # → fingerprint が "" になり不一致 → WARNING ログ + resume 継続
     output = tmp_path / "out_t82.xml"
-    result = _run_translate(
-        tmp_input,
-        output=output,
-        resume=True,
-        skip_records_text="",  # 空 set → fingerprint "" になり不一致
+    with caplog.at_level(logging.WARNING):
+        result = _run_translate(
+            tmp_input,
+            output=output,
+            resume=True,
+            skip_records_text="",  # 空 set → fingerprint "" になり不一致
+        )
+
+    assert result.exit_code == 0, (
+        f"fingerprint mismatch は WARNING のみで exit 0（継続）: "
+        f"実際 {result.exit_code}\noutput: {result.output}"
+    )
+    # 出力ファイルは生成される（resume 継続）
+    assert output.exists(), "fingerprint mismatch 時も resume 継続で出力ファイルを生成する"
+
+    # WARNING ログ または stdout に fingerprint mismatch への言及がある
+    # （iroiro.logging は rich console 経由で stdout にも出すので両方チェック）
+    warning_msgs = [
+        r.getMessage() for r in caplog.records
+        if r.levelno >= logging.WARNING
+    ]
+    all_text = " ".join(warning_msgs) + " " + result.output
+    assert "fingerprint mismatch" in all_text, (
+        f"fingerprint mismatch の WARNING ログが出力される: "
+        f"warnings={warning_msgs!r}\nstdout: {result.output!r}"
     )
 
-    assert result.exit_code == 2, (
-        f"fingerprint mismatch で exit code 2: 実際 {result.exit_code}\n"
-        f"output: {result.output}"
+    # entry[0] は progress.json の既存訳を再利用（resume が継続した証拠）
+    out_entries, _, _, _ = parse_xml(output)
+    assert out_entries[0].original_dest == "既存訳", (
+        f"entry[0] は progress.json の既存訳を再利用（resume 継続）: "
+        f"{out_entries[0].original_dest!r}"
     )
-    # 出力ファイルは生成されない
-    assert not output.exists(), "fingerprint mismatch 時は出力ファイルを生成しない"
 
 
 # ===========================================================================

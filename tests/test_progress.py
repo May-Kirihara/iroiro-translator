@@ -31,7 +31,7 @@ v0.2 追加: T77-T80（``skip_records_fingerprint`` 検証）, T83（新規書�
   - input_hash 不一致 / JSON decode error は ValueError で停止
   - input_path メタ情報が入力XMLのパスを指す
   - resume 時の failed index 保持
-  - v0.2: skip_records_fingerprint 不一致で ValueError（input_hash と同じパターン）
+  - v0.2: skip_records_fingerprint 不一致は WARNING ログのみ（resume 継続）※ v0.6.1 で緩和
   - v0.2: v0.1 形式 progress.json（fingerprint フィールド無し = ""）との互換性
   - v0.2: 新規書き込みした progress.json に skip_records_fingerprint フィールドが含まれる
 """
@@ -377,19 +377,34 @@ def test_load_existing_returns_none_when_no_file(tmp_path: Path) -> None:
 # v0.2: T77-T80 — skip_records_fingerprint 検証（ProgressWriter 単体）
 #
 # Plan §5.4: progress.json の skip_records_fingerprint が現在の skip_records と
-# 一致しない場合は ValueError で停止。input_hash と同じパターン。
+# 一致しない場合の挙動。v0.6.1 で ValueError（停止）から WARNING ログのみ
+# （resume 継続）に緩和（ユーザー実機フィードバック・resume 継続性優先）。
+# input_hash 不一致は引き続き ValueError（data integrity 直結）。
 # v0.1 形式 progress.json（fingerprint フィールド無し = ""）との互換性:
 #   - 現在の fingerprint が "" （空 set）→ resume 成功（T79）
-#   - 現在の fingerprint が非 "" （DEFAULT_SKIP_RECORDS 等）→ ValueError（T80）
+#   - 現在の fingerprint が非 "" （DEFAULT_SKIP_RECORDS 等）→ WARNING（T80）
 # ===========================================================================
 
 
-def test_T77_skip_records_fingerprint_mismatch_raises(tmp_path: Path) -> None:
-    """T77: skip_records 変更後に ``--resume`` すると ValueError で停止。
+def test_T77_skip_records_fingerprint_mismatch_warns_and_resumes(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T77: skip_records 変更後に ``--resume`` すると WARNING ログのみで resume 継続。
 
-    既存 progress.json の skip_records_fingerprint が現在の fingerprint と異なる
-    場合、load_existing は ValueError を上げる（input_hash と同じパターン）。
+    v0.6.1 で ``ValueError``（停止）から WARNING ログのみ（resume 継続）に緩和。
+    ユーザー実機フィードバック: v0.5 → v0.6 アップグレードで skip リストが
+    12件→14件に変わると resume が停止して辛い。``skip_records`` が変わっても
+    ``progress.json`` の ``entries`` と実際の処理結果の整合性は崩れないため、
+    警告のみ出して継続する。
+
+    検証:
+      - WARNING ログに "fingerprint mismatch" が含まれる
+      - ``load_existing`` は ``ProgressData`` を返す（``None`` でなく・resume 継続）
+      - ``entries`` が正しく読み込まれる（``{0: "訳文0"}``）
     """
+    import logging
+
     fp_old = compute_skip_records_fingerprint(frozenset({"HDPT:FULL", "MGEF:FULL"}))
     fp_new = compute_skip_records_fingerprint(frozenset({"HDPT:FULL"}))
 
@@ -419,8 +434,27 @@ def test_T77_skip_records_fingerprint_mismatch_raises(tmp_path: Path) -> None:
         skip_records_fingerprint=fp_new,
     )
 
-    with pytest.raises(ValueError):
-        writer.load_existing()
+    with caplog.at_level(logging.WARNING):
+        data = writer.load_existing()
+
+    # ValueError は上がらない・ProgressData を返す（resume 継続）
+    assert data is not None, (
+        "fingerprint 不一致でも WARNING のみで resume 継続し ProgressData を返す"
+    )
+
+    # WARNING ログに fingerprint mismatch の言及がある
+    warning_msgs = [
+        r.getMessage() for r in caplog.records
+        if r.levelno >= logging.WARNING
+    ]
+    assert any("fingerprint mismatch" in m for m in warning_msgs), (
+        f"fingerprint mismatch の WARNING ログが出力される: {warning_msgs!r}"
+    )
+
+    # entries が正しく読み込まれる（resume で再利用される）
+    assert data.entries == {0: "訳文0"}, (
+        f"entries が正しく読み込まれる: {data.entries!r}"
+    )
 
 
 def test_T78_skip_records_fingerprint_match_succeeds(tmp_path: Path) -> None:
@@ -503,20 +537,30 @@ def test_T79_v01_progress_with_empty_fingerprint_resumes_with_empty_set(
     assert data.entries == {0: "訳文0"}
 
 
-def test_T80_v01_progress_with_default_skip_records_raises(
+def test_T80_v01_progress_with_default_skip_records_warns_and_resumes(
     tmp_path: Path,
     default_skip_records: frozenset[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """T80: v0.1 形式 progress.json（fingerprint=""）+ 非空 skip_records → ValueError.
+    """T80: v0.1 形式 progress.json（fingerprint=""）+ 非空 skip_records → WARNING + resume.
 
     v0.1 で作成された progress.json（fingerprint=""）に対して v0.6 のデフォルト動作
     （``default_skip_records`` = 非空 fingerprint）で resume しようとすると、
-    fingerprint 不一致で ValueError になる（安全側に倒す）。
-    ユーザーは progress.json を削除する必要がある。
+    fingerprint 不一致となる。v0.6.1 では ``ValueError``（停止）から WARNING ログのみ
+    （resume 継続）に緩和された（ユーザー実機フィードバック・resume 継続性優先）。
+    このシナリオは「v0.5 → v0.6 アップグレードで skip リストが増えた」ユーザー実機
+    フィードバックに直接対応する。
 
     v0.6（Plan 006 §4.5）: ``DEFAULT_SKIP_RECORDS`` 定数は削除され、テストは
     ``default_skip_records`` fixture（14 件）を使用する。
+
+    検証:
+      - WARNING ログに "fingerprint mismatch" が含まれる
+      - ``load_existing`` は ``ProgressData`` を返す（``None`` でなく・resume 継続）
+      - ``entries`` が正しく読み込まれる（``{0: "訳文0"}``）
     """
+    import logging
+
     progress_path = tmp_path / "input.iroiro-progress.json"
     # v0.1 形式: skip_records_fingerprint フィールド無し（= "" 扱い）
     progress_path.write_text(
@@ -547,8 +591,27 @@ def test_T80_v01_progress_with_default_skip_records_raises(
         skip_records_fingerprint=fp_default,  # v0.1 の "" と不一致
     )
 
-    with pytest.raises(ValueError):
-        writer.load_existing()
+    with caplog.at_level(logging.WARNING):
+        data = writer.load_existing()
+
+    # ValueError は上がらない・ProgressData を返す（resume 継続）
+    assert data is not None, (
+        "v0.1 形式 + 非空 skip_records の不一致でも WARNING のみで resume 継続"
+    )
+
+    # WARNING ログに fingerprint mismatch の言及がある
+    warning_msgs = [
+        r.getMessage() for r in caplog.records
+        if r.levelno >= logging.WARNING
+    ]
+    assert any("fingerprint mismatch" in m for m in warning_msgs), (
+        f"fingerprint mismatch の WARNING ログが出力される: {warning_msgs!r}"
+    )
+
+    # entries が正しく読み込まれる（resume で再利用される）
+    assert data.entries == {0: "訳文0"}, (
+        f"entries が正しく読み込まれる: {data.entries!r}"
+    )
 
 
 # ===========================================================================
