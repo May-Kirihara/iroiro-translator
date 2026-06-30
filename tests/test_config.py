@@ -134,8 +134,12 @@ def test_T89_full_config_all_keys_reflected(
     assert "BOOK:DESC" in result["rec_hints"]
     assert len(result["rec_hints"]) == 18
 
-    # 全体で 9 キー（既存 6 + v0.5 新規 3）
-    assert len(result) == 9, f"全項目が反映される: 実際 {result!r}"
+    # v0.6 skip_records は frozenset[str]・14 件
+    assert isinstance(result["skip_records"], frozenset)
+    assert len(result["skip_records"]) == 14
+
+    # 全体で 10 キー（既存 6 + v0.5 新規 3 + v0.6 新規 1）
+    assert len(result) == 10, f"全項目が反映される: 実際 {result!r}"
 
 
 # ===========================================================================
@@ -827,6 +831,7 @@ def test_T135_reject_phrases_dedup(
         '[iroiro]\n'
         'system_prompt = "x"\n'
         'reject_phrases = ["了解", "了解", "翻訳します", "翻訳します"]\n'
+        'skip_records = []\n'
         '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
         encoding="utf-8",
     )
@@ -938,6 +943,7 @@ def test_T139_rec_hints_empty_table_allowed(
         '[iroiro]\n'
         'system_prompt = "x"\n'
         'reject_phrases = ["了解"]\n'
+        'skip_records = []\n'
         '[iroiro.rec_hints]\n',  # ヘッダのみ・中身無し
         encoding="utf-8",
     )
@@ -1016,6 +1022,7 @@ def test_T141_rec_hints_unknown_rec_allowed(
         '[iroiro]\n'
         'system_prompt = "x"\n'
         'reject_phrases = ["了解"]\n'
+        'skip_records = []\n'
         '[iroiro.rec_hints]\n'
         '"MGEF:FULL" = "魔法の効果名。"\n'
         '"FOO:BAR" = "未知の REC 型のヒント。"\n',
@@ -1117,6 +1124,7 @@ def test_T150_unknown_iroiro_key_warns_only(
         '[iroiro]\n'
         'system_prompt = "x"\n'
         'reject_phrases = ["了解"]\n'
+        'skip_records = []\n'
         'unknown_key = "this should be ignored with a warning"\n'
         '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
         encoding="utf-8",
@@ -1163,6 +1171,7 @@ def test_T151_rec_hints_unknown_rec_no_warning(
         '[iroiro]\n'
         'system_prompt = "x"\n'
         'reject_phrases = ["了解"]\n'
+        'skip_records = []\n'
         '[iroiro.rec_hints]\n'
         '"MGEF:FULL" = "魔法の効果名。"\n'
         '"FOO:BAR" = "未知の REC 型のヒント。"\n',
@@ -1350,3 +1359,362 @@ def test_T157_build_user_message_empty_rec_hints_returns_source_only() -> None:
     assert result == source, (
         f"空 rec_hints の時は source のみ返す: 実際 {result!r}"
     )
+
+
+# ===========================================================================
+# v0.6: T158-T164 — skip_records の toml 化（Plan 006 §5 / §9.2）
+#
+# Plan 006 §5 で [iroiro] skip_records が必須化（案 α 徹底版・DEFAULT_SKIP_RECORDS
+# 完全削除）。本セクションは load_config が skip_records を正しく検証・normalize
+# することを検証する。
+#
+# 検証ルール（Plan 006 §5.2）:
+#
+# ===================  =========================================  ===============================
+# キー                 制約                                        備考
+# ===================  =========================================  ===============================
+# ``skip_records``    ``list[str]``・各要素非空 str              ``bool`` 拒否・空リスト ``[]`` は許可・
+#                                                                 重複は ``frozenset`` 化で除去・
+#                                                                 各要素を ``strip().upper()`` で正規化
+# ===================  =========================================  ===============================
+#
+# 必須チェック（Plan 006 §5.3）: 欠損時 ``IroiroError``
+#   ``"[iroiro] skip_records is required in <path>"``
+#
+# ※ WP-1 段階では load_config に skip_records の検証が未実装のため、本セクションの
+#    テストは全て red（WP-2 完了後に green 化）。既存テスト（T88-T157）は現状維持。
+#
+# ※ 本セクションのテストは ``load_config`` 経由で検証するため、``_validate_skip_records``
+#    関数を直接 import しない（local import 不要・collection error 回避）。
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# T158: load_config が skip_records を frozenset[str] で返す
+# ---------------------------------------------------------------------------
+
+def test_T158_skip_records_returned_as_frozenset(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T158: ``load_config`` が ``skip_records`` を ``frozenset[str]`` で返す。
+
+    Plan 006 §5.1 / §5.2: ``skip_records`` は ``list[str]``（TOML 配列）を受取り、
+    ``frozenset[str]`` に normalize される（重複除去・大文字化）。
+    ``iroiro_v05_full.toml`` に v0.6 の 14 件を追記した状態で、全 14 件が
+    ``frozenset[str]`` として返ることを検証する。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱い（WARNING + 無視）のため
+       ``result["skip_records"]`` が ``KeyError`` になり red。WP-2 完了後に green。
+    """
+    shutil.copy(FIXTURES_DIR / "iroiro_v05_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = load_config(None)
+
+    # skip_records は frozenset[str] として返る
+    assert "skip_records" in result, (
+        f"skip_records は必須・dict に含まれる: 実際 {result.keys()!r}"
+    )
+    sr = result["skip_records"]
+    assert isinstance(sr, frozenset), (
+        f"skip_records は frozenset に normalize される: 実際 {type(sr)!r}"
+    )
+    # v0.6 デフォルト 14 件が全て含まれる
+    expected = frozenset({
+        "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+        "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+        "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+        "FLST:FULL", "KYWD:FULL",
+    })
+    assert sr == expected, (
+        f"skip_records は v0.6 デフォルト 14 件: 実際 {sr!r}"
+    )
+    assert len(sr) == 14
+
+
+# ---------------------------------------------------------------------------
+# T159: skip_records 欠損で IroiroError
+# ---------------------------------------------------------------------------
+
+def test_T159_skip_records_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T159: ``skip_records`` が toml に存在しない場合 ``IroiroError``。
+
+    Plan 006 §5.3: ``skip_records`` は必須。欠損時のエラーメッセージは
+    ``"[iroiro] skip_records is required in <path>"``（system_prompt /
+    reject_phrases / rec_hints と同パターン）。
+
+    ※ WP-1 段階では ``skip_records`` 必須チェックが未実装のため、``load_config``
+       が例外を投げずに ``IroiroError`` が raise されない → red。WP-2 完了後に green。
+    """
+    shutil.copy(
+        FIXTURES_DIR / "iroiro_v06_missing_skip_records.toml",
+        tmp_path / "iroiro.toml",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(IroiroError) as exc_info:
+        load_config(None)
+
+    msg = str(exc_info.value)
+    assert "skip_records" in msg, (
+        f"エラーメッセージに skip_records が言及される: 実際 {msg!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T160: skip_records が list でない（文字列スカラー）→ IroiroError
+# ---------------------------------------------------------------------------
+
+def test_T160_skip_records_string_scalar_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T160: ``skip_records = "HDPT:FULL"``（文字列スカラー） → ``IroiroError``。
+
+    Plan 006 §5.2: ``list`` 型のみ許可。文字列スカラーは ``list`` でないため
+    型エラーで拒否される（``_validate_reject_phrases`` と同パターン）。
+    YAML 等と勘違いして文字列で書く事故を防ぐ。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱いで検証されないため
+       ``IroiroError`` が raise されない → red。WP-2 完了後に green。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = "HDPT:FULL"\n'  # 文字列スカラー（list でない）
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(IroiroError) as exc_info:
+        load_config(None)
+
+    msg = str(exc_info.value).lower()
+    assert "skip_records" in msg or "list" in msg, (
+        f"エラーメッセージに skip_records または list が言及される: 実際 {msg!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T161: skip_records 要素が空文字 → IroiroError
+# ---------------------------------------------------------------------------
+
+def test_T161_skip_records_empty_element_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T161: ``skip_records`` 要素が空文字（``""``） → ``IroiroError``。
+
+    Plan 006 §5.2: 各要素は非空 ``str``。``""`` は値域エラーで拒否される
+    （``_validate_reject_phrases`` と同パターン）。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱いで検証されないため
+       ``IroiroError`` が raise されない → red。WP-2 完了後に green。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = ["HDPT:FULL", ""]\n'  # 空文字要素
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(IroiroError):
+        load_config(None)
+
+
+# ---------------------------------------------------------------------------
+# T161b: skip_records 要素が strip 後空文字 → IroiroError
+# ---------------------------------------------------------------------------
+
+def test_T161b_skip_records_whitespace_element_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T161b: ``skip_records`` 要素が strip 後空文字（``"   "``） → ``IroiroError``。
+
+    Plan 006 §5.2 / §9.2 T161b（Codex review 指摘）: ``strip().upper()`` 後も
+    非空を要求する（``_validate_reject_phrases`` と同パターン）。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱いで検証されないため
+       ``IroiroError`` が raise されない → red。WP-2 完了後に green。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = ["HDPT:FULL", "   "]\n'  # strip 後空文字
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(IroiroError):
+        load_config(None)
+
+
+# ---------------------------------------------------------------------------
+# T161c: skip_records 要素が int / bool → IroiroError
+# ---------------------------------------------------------------------------
+
+def test_T161c_skip_records_int_bool_element_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T161c: ``skip_records`` 要素が ``int`` / ``bool`` → ``IroiroError``。
+
+    Plan 006 §5.2 / §9.2 T161c（Codex review 指摘）: ``bool ⊂ int`` 事故防止のため
+    要素は厳格に ``str`` のみ許可（``_validate_reject_phrases`` と対称）。
+    ``[123]`` / ``[true]`` 等の要素は型エラーで拒否される。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱いで検証されないため
+       ``IroiroError`` が raise されない → red。WP-2 完了後に green。
+    """
+    # 拒否ケース: int 要素
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = [123]\n'  # int 要素
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(IroiroError):
+        load_config(None)
+
+    # 拒否ケース: bool 要素
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = [true]\n'  # bool 要素
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(IroiroError):
+        load_config(None)
+
+
+# ---------------------------------------------------------------------------
+# T162: skip_records = [] は空 frozenset として許可（全件翻訳）
+# ---------------------------------------------------------------------------
+
+def test_T162_skip_records_empty_list_allowed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T162: ``skip_records = []``（空リスト）は正当値として許可される。
+
+    Plan 006 §5.1 / §5.2 / §4.5: 空リスト ``[]`` は正当値（空 ``frozenset`` に
+    normalize）。「全件翻訳」のユースケース。``compute_skip_records_fingerprint``
+    の空集合特例（``""`` 返却・Plan 006 §4.5）と整合。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱いで ``result["skip_records"]``
+       が ``KeyError`` になり red。WP-2 完了後に green。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = []\n'  # 空リスト
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = load_config(None)
+
+    # 空リスト（または空 frozenset）として返る・エラーにならない
+    assert "skip_records" in result, (
+        f"skip_records = [] は正当値・dict に含まれる: 実際 {result.keys()!r}"
+    )
+    sr = result["skip_records"]
+    assert isinstance(sr, frozenset), (
+        f"skip_records は frozenset: 実際 {type(sr)!r}"
+    )
+    assert len(sr) == 0, f"skip_records = [] は空 frozenset として返る: 実際 {sr!r}"
+
+
+# ---------------------------------------------------------------------------
+# T163: skip_records の大文字正規化（hdpt:full → HDPT:FULL）
+# ---------------------------------------------------------------------------
+
+def test_T163_skip_records_uppercase_normalization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T163: ``skip_records`` の各要素は ``strip().upper()`` で正規化される。
+
+    Plan 006 §5.2: 各要素を ``strip().upper()`` で正規化（``_parse_skip_records``
+    と同様）。``"hdpt:full"`` は ``"HDPT:FULL"`` に変換されて返る。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱いで ``result["skip_records"]``
+       が ``KeyError`` になり red。WP-2 完了後に green。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = ["hdpt:full"]\n'  # 小文字
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = load_config(None)
+
+    sr = result["skip_records"]
+    assert "HDPT:FULL" in sr, (
+        f"小文字 'hdpt:full' は 'HDPT:FULL' に正規化される: 実際 {sr!r}"
+    )
+    assert "hdpt:full" not in sr, (
+        f"小文字のままの要素は残らない: 実際 {sr!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T164: skip_records 重複除去（["HDPT:FULL", "HDPT:FULL"] → 1 件）
+# ---------------------------------------------------------------------------
+
+def test_T164_skip_records_dedup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T164: ``skip_records`` の重複要素は ``frozenset`` 化で除去される。
+
+    Plan 006 §5.1 / §5.2: ``frozenset[str]`` への normalize で重複除去（T135 の
+    ``reject_phrases`` と同パターン）。``["HDPT:FULL", "HDPT:FULL"]`` は 1 件になる。
+
+    ※ WP-1 段階では ``skip_records`` は未知キー扱いで ``result["skip_records"]``
+       が ``KeyError`` になり red。WP-2 完了後に green。
+    """
+    (tmp_path / "iroiro.toml").write_text(
+        '[iroiro]\n'
+        'system_prompt = "x"\n'
+        'reject_phrases = ["了解"]\n'
+        'skip_records = ["HDPT:FULL", "HDPT:FULL", "MGEF:FULL", "MGEF:FULL"]\n'
+        '[iroiro.rec_hints]\n"MGEF:FULL" = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = load_config(None)
+
+    sr = result["skip_records"]
+    assert isinstance(sr, frozenset), (
+        f"skip_records は frozenset: 実際 {type(sr)!r}"
+    )
+    assert sr == frozenset({"HDPT:FULL", "MGEF:FULL"}), (
+        f"重複が除去されて 2 件になる: 実際 {sr!r}"
+    )
+    assert len(sr) == 2

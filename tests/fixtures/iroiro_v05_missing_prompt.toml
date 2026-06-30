@@ -20,6 +20,16 @@ reject_phrases = [
   "翻訳します",
 ]
 
+# === v0.6 新規（必須）===
+# ※ system_prompt 欠損の検証が先に発生するため、skip_records の検証は到達しない
+#    が、v0.6 必須チェックで fail しないよう本 fixture にも含める。
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
+
 [iroiro.rec_hints]
 "MGEF:FULL" = "魔法の効果名。"
 "BOOK:DESC" = "書籍の本文。"

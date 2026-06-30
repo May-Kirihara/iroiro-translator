@@ -100,34 +100,19 @@ def contains_japanese(text: str) -> bool:
     return _JAPANESE_RE.search(text) is not None
 
 
-DEFAULT_SKIP_RECORDS: frozenset[str] = frozenset({
-    "HDPT:FULL",  # Head Part name
-    "FURN:FULL",  # Furniture name
-    "CLAS:FULL",  # Class name
-    "DOOR:FULL",  # Door name
-    "FACT:FULL",  # Faction name
-    "CLFM:FULL",  # Color Form name
-    "TREE:FULL",  # Tree name
-    "MGEF:FULL",  # Magic Effect name
-    "RACE:FULL",  # Race name
-    "EXPL:FULL",  # Explosion name
-    "HAZD:FULL",  # Hazard name
-    "BPTD:BPTN",  # Body Part Data name
-})
-
-
 def is_translation_needed(
     source: str,
-    rec: str = "",
-    skip_records: frozenset[str] | None = None,
+    rec: str,
+    skip_records: frozenset[str],
 ) -> bool:
-    """翻訳が必要か（Plan §5.7.1 v0.3 + v0.2 REC 型スキップ拡張）。
+    """翻訳が必要か（Plan §5.7.1 v0.3 + v0.2 REC 型スキップ拡張・v0.6 で引数必須化）。
 
     Args:
         source: ``<Source>`` の生文字列。
-        rec: ``<REC>`` の値（例: ``"HDPT:FULL"``）。空文字列も可（後方互換性）。
-        skip_records: スキップ対象 REC 型のセット。``None`` の場合は
-            :data:`DEFAULT_SKIP_RECORDS` を使用。
+        rec: ``<REC>`` の値（例: ``"HDPT:FULL"``）。空文字列も可
+            （空の場合は REC 型スキップが適用されず言語判定のみ）。
+        skip_records: スキップ対象 REC 型のセット。``iroiro.toml`` の
+            ``skip_records`` または CLI ``--skip-records`` から構築される。
 
     Returns:
         ``True`` = 翻訳対象, ``False`` = スキップ。
@@ -139,11 +124,14 @@ def is_translation_needed(
     3. ひらがな・カタカナ・漢字を含む → ``False``
     4. それ以外（ASCIIのみ、non-ASCII 英語含む）→ ``True``
 
-    後方互換性: ``rec=""`` の場合は REC 型スキップが適用されず、
-    v0.1 の ``is_translation_needed(source)`` と同じ挙動。
+    v0.6（Plan 006 §4.4）の破壊的変更:
+
+    - ``rec`` / ``skip_records`` は **必須引数**（デフォルト値削除）
+    - :data:`DEFAULT_SKIP_RECORDS` 定数は **完全削除** され、``skip_records``
+      は ``iroiro.toml`` から注入される（案 α 徹底版）
+    - ``skip_records`` 省略時は ``TypeError``（Python の引数欠落と同じ）
+    - ``rec=""`` の場合は REC 型スキップが適用されず、言語判定のみ機能する
     """
-    if skip_records is None:
-        skip_records = DEFAULT_SKIP_RECORDS
     if rec and rec in skip_records:
         return False
     if source is None or not source or not source.strip():
@@ -163,7 +151,8 @@ def _parse_skip_records(text: str) -> frozenset[str]:
     * 空文字列要素は無視（``"A,,B"`` → ``{A, B}``）
     * 重複は自動で排除（frozenset の性質）
     * 大文字小文字は区別しない（``hdpt:full`` → ``HDPT:FULL`` に正規化）
-        ※ REC 型は Skyrim 側で大文字で定義されているため
+        ※ REC 型は Bethesda ゲーム（Skyrim / Fallout4 / Starfield）側で
+          大文字で定義されているため
     """
     if not text.strip():
         return frozenset()

@@ -25,4 +25,14 @@ reject_phrases = [
   "翻訳します",
 ]
 
+# === v0.6 新規（必須）===
+# ※ [iroiro.rec_hints] テーブル欠損の検証が先に発生するため、skip_records の検証は
+#    到達しないが、v0.6 必須チェックで fail しないよう本 fixture にも含める。
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
+
 # [iroiro.rec_hints] テーブルは意図的に書かない（必須エラー検証用）

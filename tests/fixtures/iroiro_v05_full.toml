@@ -4,6 +4,8 @@
 # v0.5 の LLM 挙動中核 3 項目（system_prompt / reject_phrases / [iroiro.rec_hints]）
 # を全て含む。「正常系」のテストで使う。
 #
+# v0.6 追加分（Plan 006 §5）: skip_records も必須・14 件（NG ガイド §9.1 準拠）。
+#
 # 重要（TOML 構文・B5 指摘）: [iroiro.rec_hints] 配下のキーは "MGEF:FULL" のように
 # ":" を含むため、必ず quoted key（"MGEF:FULL" のように " で囲む）で書くこと。
 # TOML 1.0 の bare key は [A-Za-z0-9_-] のみ許容するため、":" を含むと parse error になる。
@@ -36,6 +38,14 @@ reject_phrases = [
   "以下に訳します", "訳文を示します",
   "以下の通りです", "以下の通りとなります", "次のようになります",
   "上記の通りです",
+]
+
+# === v0.6 新規（必須・NG ガイド §9.1 Conservative Preset・EDID 抜き）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
 ]
 
 [iroiro.rec_hints]

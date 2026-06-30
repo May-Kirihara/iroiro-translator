@@ -26,8 +26,7 @@ iroiro translate INPUT.xml [OPTIONS]
 | `--resume` | FLAG | `False` | `progress.json` があれば再開 |
 | `--retry-failed` / `--no-retry-failed` | FLAG | `False` | resume 時に `failed` エントリを再翻訳対象に戻す（未指定時は `iroiro.toml` → 内蔵デフォルト）（v0.4） |
 | `--dry-run` | FLAG | `False` | LLM を呼ばず処理件数のみ表示 |
-| `--no-skip-default-records` | FLAG | `False` | デフォルトの12件スキップを無効化（全 REC 型を翻訳対象にする）（v0.2） |
-| `--skip-records` | TEXT | `""` | 追加スキップ REC 型（カンマ区切り・例: `"LCTN:FULL,ACTI:FULL"`）（v0.2） |
+| `--skip-records` | TEXT | `None` | 翻訳スキップ REC 型（カンマ区切り・例: `"HDPT:FULL,FACT:FULL"`）。**3 状態**（v0.6）: 省略=`iroiro.toml` の `skip_records` を使用 / `""`=明示的空 set（全件翻訳）/ 非空文字列=toml を完全置換（v0.2・v0.6 でセマンティクス変更） |
 | `-v`, `--verbose` | FLAG | `False` | 詳細ログ（DEBUG レベル） |
 | `--help` | — | — | ヘルプを表示して終了 |
 
@@ -47,6 +46,14 @@ iroiro translate INPUT.xml [OPTIONS]
 > リスクを避けるため）。また `iroiro.toml` 自体が `--dry-run` を含む全操作で **必須** になりました。
 > 詳細は下記の「[`iroiro.toml` 必須化と移行（v0.5）](#iroirotoml-必須化と移行v05)」節と
 > 「[LLM プロンプトのカスタマイズ（v0.5）](#llm-プロンプトのカスタマイズv05)」節を参照。
+
+> **⚠️ v0.6 の破壊的変更**: `skip_records`（翻訳スキップ REC 型リスト）が `iroiro.toml` の
+> **必須項目** になりました（`DEFAULT_SKIP_RECORDS` 定数をコードから完全削除し toml 化・
+> v0.5 と同じ哲学）。これに伴い CLI フラグも変更: `--no-skip-default-records` は **廃止**、
+> `--skip-records` は **完全置換セマンティクス**（toml を上書き）に変更されました。
+> 既存の `iroiro.toml` を流用する場合は `skip_records`（14 件）を **手動追記** してください。
+> 詳細は下記の「[skip_records の toml 必須化と移行（v0.6）](#skip_records-の-toml-必須化と移行v06)」節と
+> 「[翻訳スキップ REC 型（v0.2 / v0.6）](#翻訳スキップ-rec-型v02--v06)」節を参照。
 
 ---
 
@@ -69,6 +76,10 @@ v0.5 ではキーは **2 群** に分かれます:
 - **接続設定（省略可・6項目）**: `api_base` / `api_key` / `model` / `timeout` / `concurrency` / `max_chars`（＋ `retry_failed`）。書かなかった項目は CLI フラグ指定時はそちら優先、未指定時は内蔵デフォルトに落ちます。
 - **LLM 挙動中核（必須・3項目・v0.5 新規）**: `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`。`iroiro.toml` に必ず書く必要があります（CLI フラグでの上書き非対応・省略時はエラーで停止）。
 
+v0.6 ではさらに **`skip_records`（必須・1項目）** が追加されます:
+
+- **翻訳スキップ REC 型（必須・v0.6 新規）**: `skip_records`。`iroiro.toml` に必ず書く必要があります（CLI `--skip-records` で完全置換可能・省略時は toml の値を使用）。
+
 ```toml
 [iroiro]
 # === 接続設定（省略可・CLI フラグ ＞ iroiro.toml ＞ 内蔵デフォルト）===
@@ -79,6 +90,14 @@ timeout     = 120.0
 concurrency = 1
 max_chars   = 4000
 retry_failed = false   # v0.4 追加・省略時は false 扱い
+
+# === 翻訳スキップ REC 型（必須・v0.6 新規・全文は iroiro.toml.example を参照）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
 
 # === LLM 挙動中核（必須・v0.5 新規・全文は iroiro.toml.example を参照）===
 system_prompt = """
@@ -96,9 +115,10 @@ reject_phrases = [
 
 # 別テーブルとして記述（[iroiro] の外・ quoted REC key 必須）:
 [iroiro.rec_hints]
-"MGEF:FULL" = "魔法の効果名。1〜4語程度の簡潔な表現。"
+"MGEF:DESC" = "魔法効果の説明文。自然な日本語の文章。"
 "BOOK:DESC" = "書籍の本文。物語風の自然な日本語。"
-# ...（18種全文は iroiro.toml.example を参照）
+"INFO:NAM1" = "NPC の会話本文。自然な会話文。"
+# ...（v0.6 拡充版の全種は iroiro.toml.example を参照）
 ```
 
 > **重要（TOML 構文）**: `[iroiro.rec_hints]` 配下のキーは `MGEF:FULL` のように `:` を含むため、
@@ -155,6 +175,20 @@ cp iroiro.toml.example iroiro.toml
 | `max_chars` | 整数 | `>= 0` | 1エントリの最大文字数。超過時はスキップ。**`0` は正当値（= 全件スキップ）** なので注意 |
 | `retry_failed` | 真偽値 | `true` / `false` | resume 時に `failed` エントリを再翻訳対象に戻すか。デフォルト `false`（後方互換・v0.4 追加）。詳細は下記「[failed の再試行（v0.4）](#failed-の再試行v04)」節を参照 |
 
+#### 翻訳スキップ REC 型（v0.6 新規・必須）
+
+以下の 1 項目は v0.6 で追加された **必須** 項目です。`iroiro.toml` に必ず指定してください（省略時はエラーで停止・`[iroiro] skip_records is required`）。CLI `--skip-records` で完全置換可能です。カスタマイズ方法は「[翻訳スキップ REC 型（v0.2 / v0.6）](#翻訳スキップ-rec-型v02--v06)」節を参照。
+
+| キー | 型 | 値域 | 意味 |
+|---|---|---|---|
+| `skip_records` | リスト（文字列） | 各要素が非空 `str`・`bool` 拒否 | 翻訳スキップ対象の REC 型（`REC:FIELD` 形式）のリスト。各要素は `strip().upper()` で大文字正規化・重複は自動で `frozenset` 化して除去。空リスト `[]` は許可（全件翻訳・`compute_skip_records_fingerprint` の空集合特例と整合）。v0.6 で `DEFAULT_SKIP_RECORDS` 定数がコードから完全削除され toml 必須化（案 α・v0.5 と同じ哲学） |
+
+> **`bool` は拒否**: `skip_records = [True]` のような書き間違いはエラーになります（Python で
+> `bool` が `int`/汎用型の事故を防ぐため・`reject_phrases` と対称な厳格型検証）。
+
+> **v0.6 のデフォルト 14 件**: `iroiro.toml.example` には NG ガイド §9.1 Conservative
+> Preset 準拠（EDID 抜き）の 14 件が記載済み。`cp` でそのまま使えます。
+
 #### LLM 挙動中核（v0.5 新規・必須）
 
 以下の 3 項目は v0.5 で追加された **必須** 項目です。`iroiro.toml` に必ず指定してください（CLI フラグでの上書き非対応）。カスタマイズ方法は「[LLM プロンプトのカスタマイズ（v0.5）](#llm-プロンプトのカスタマイズv05)」節を参照。
@@ -203,6 +237,7 @@ cp iroiro.toml.example iroiro.toml
 | `system_prompt` 欠損（v0.5） | `Error: [iroiro] system_prompt is required in <パス>` |
 | `reject_phrases` 欠損（v0.5） | `Error: [iroiro] reject_phrases is required in <パス>` |
 | `[iroiro.rec_hints]` 欠損（v0.5） | `Error: [iroiro.rec_hints] table is required in <パス>` |
+| `skip_records` 欠損（v0.6） | `Error: [iroiro] skip_records is required in <パス>` |
 | 型不一致（`timeout = "abc"` 等） | `Error: <キー> must be <期待型>, got <実際型> in <パス>` |
 | 値域エラー（`timeout = -1` 等） | `Error: <キー> must be > 0, got <値> in <パス>` |
 | `[iroiro.rec_hints]` の値が bool（v0.5） | `Error: rec_hints[<key>] must be non-empty str in <パス>`（`bool` / `int` 等の非 `str` 値） |
@@ -290,6 +325,158 @@ Error: [iroiro] system_prompt is required in iroiro.toml
 
 ---
 
+## skip_records の toml 必須化と移行（v0.6）
+
+v0.6 で `DEFAULT_SKIP_RECORDS` 定数を `iroiro/translator.py` から **完全削除** し、
+`iroiro.toml` の `[iroiro] skip_records`（必須）に移行した（案 α 徹底版・v0.5 の LLM 挙動中核
+toml 化と同じ哲学）。これに伴い skip リストを 12 件 → **14 件**（`FLST:FULL` / `KYWD:FULL` 追加）
+に拡充し、`[iroiro.rec_hints]` も 3 ゲーム（Skyrim / Fallout4 / Starfield）共通の翻訳候補レコードを
+網羅するよう拡充した。
+
+### 影響範囲（破壊的変更）
+
+v0.5 まで以下の操作が動いていた場面が、v0.6 では **エラーで停止** します:
+
+```bash
+# 1. iroiro.toml に skip_records が無い → エラー（v0.5 までの toml をそのまま使うと発生）
+uv run iroiro translate INPUT.xml --dry-run
+# Error: [iroiro] skip_records is required in iroiro.toml
+
+# 2. v0.5 までの progress.json を --resume すると fingerprint 不一致で停止
+uv run iroiro translate INPUT.xml --resume
+# skip_records を変更したため resume を中止します（fingerprint 不一致・安全側の挙動）
+
+# 3. --no-skip-default-records フラグが未知オプションに（廃止）
+uv run iroiro translate INPUT.xml --no-skip-default-records
+# No such option: --no-skip-default-records
+```
+
+### 移行手順 — 新規ユーザー
+
+```bash
+# 1回だけ（雛形をコピー・v0.6 の skip_records 14件 + 拡充 rec_hints が全て入っている）
+cp iroiro.toml.example iroiro.toml
+# 必要なら編集（api_key / model / skip_records / rec_hints 等）
+
+# 以降は今まで通り
+uv run iroiro translate INPUT.xml --dry-run
+uv run iroiro translate INPUT.xml --resume
+```
+
+`iroiro.toml.example` には v0.6 の全デフォルト（`skip_records` 14 件・拡充済み `rec_hints`・
+v0.5 の `system_prompt` / `reject_phrases`）が入っているため、`cp` 直後は動きます。
+
+### 移行手順 — 既存ユーザー（v0.5 以下からのアップグレード）
+
+**重要**: 既存の `iroiro.toml` を流用する場合は **`skip_records`（14 件）を手動で追記**
+してください。`cp iroiro.toml.example iroiro.toml` で上書きすると、既存の API 設定
+（エンドポイント・API キー等）やカスタマイズした `system_prompt` / `rec_hints` が消えてしまいます。
+
+既存の `iroiro.toml` の `[iroiro]` セクション内に以下を追記します:
+
+```toml
+# [iroiro] セクション内に追記（v0.6 必須）:
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
+```
+
+追加し忘れると以下のエラーで停止します:
+
+```
+Error: [iroiro] skip_records is required in iroiro.toml
+```
+
+### `--no-skip-default-records` 廃止と代替手段
+
+v0.6 で `DEFAULT_SKIP_RECORDS` 定数がコードから消えたため、「default を無効化」の意味を
+成さない `--no-skip-default-records` フラグは **廃止** されました（未知オプションとして弾かれる）。
+「全件翻訳」したい場合は以下のいずれかを使います:
+
+```bash
+# (a) CLI で --skip-records "" を指定（1回限り・toml を完全置換して空 set に）
+uv run iroiro translate INPUT.xml --skip-records ""
+
+# (b) iroiro.toml で skip_records = [] を指定（恒久的に全件翻訳）
+# [iroiro]
+# skip_records = []
+```
+
+### `--skip-records` のセマンティクス変更（完全置換）
+
+v0.5 までは「デフォルト12件 + CLI 指定」の **追加** セマンティクスでしたが、v0.6 では
+toml の `skip_records` を **完全置換** するセマンティクスに変更しました（v0.5 の CLI は toml を
+上書きパターンと整合）。`str | None = None` パターンで **3 状態** を区別します:
+
+| `--skip-records` 指定 | 意味 |
+|---|---|
+| 省略 | `iroiro.toml` の `skip_records` を使用（デフォルト動作） |
+| `--skip-records ""` | 明示的に空 set（全件翻訳） |
+| `--skip-records "HDPT:FULL,FACT:FULL"` | toml を完全置換（指定した set のみスキップ） |
+
+> **v0.5 以前との非互換**: v0.5 で `--skip-records "LCTN:FULL"` は「デフォルト12件 + LCTN:FULL」
+> （13件スキップ）を意味しましたが、v0.6 では「LCTN:FULL のみ」（1件スキップ）を意味します。
+> 移行時はご注意ください。
+
+### `progress.json` の fingerprint 不整合（resume 時停止）
+
+v0.5 までの `progress.json` は `skip_records_fingerprint` に 12 件の fingerprint を持っています。
+v0.6 で 14 件に変わるため、`--resume` 時に fingerprint 不一致で停止します（仕様通りの安全側の挙動・
+`input_hash` 不一致と同じパターン）。エラーメッセージに従い `progress.json` を削除して再実行してください:
+
+```bash
+rm path/to/your_mod.xml.iroiro-progress.json
+```
+
+### 3 ゲーム対応（Skyrim / Fallout4 / Starfield）
+
+v0.6 の主目的の一つ。skip リスト 14 件と `[iroiro.rec_hints]` は NG ガイド §3 / §4 / §9.1 に基づき
+3 ゲーム共通の「内部管理用 / 翻訳候補」レコードを網羅しています:
+
+- **skip リスト 14 件**: 3 ゲーム共通の内部管理用レコード（`FLST:FULL` / `KYWD:FULL` は v0.6 追加・
+  FormID List / Keyword は Fallout4 / Starfield でも内部管理用）
+- **`rec_hints` 拡充**: NG ガイド §4「Usually Safe Translation Targets」に基づき、
+  `AMMO:FULL`（弾薬）/ `MISC:FULL`（雑貨）/ `WRLD:FULL`（ワールドスペース）/
+  `INFO:NAM1`（NPC 会話本文）等の Fallout4 / Starfield で出現するレコードを追加
+
+> **ゲーム選択機能はスコープ外**: `--game skyrim|fallout4|starfield` のようなゲーム選択機能や、
+> Conservative / Translation-Friendly / Starfield-Friendly のプリセット切り替え機能は v0.6 では
+> **提供しない**（ユーザー承認済み・将来機能）。3 ゲーム共通のデフォルトで運用し、必要に応じて
+> `iroiro.toml` の `skip_records` / `rec_hints` を個別編集してください。
+
+### `PERK` / `AVIF` の保守的運用について
+
+`PERK:FULL` / `PERK:DESC` / `AVIF:FULL` は NG ガイド内で扱いが揺れています:
+- §4「Usually Safe Translation Targets」では safe target（翻訳候補）→ iroiro のデフォルト `rec_hints` に採用
+- §5「Review-Needed List」/ §9.1「Conservative Preset review-needed」では review-needed
+
+iroiro は review-needed 状態を持たないため、本デフォルトでは §4 に従い翻訳候補としています。
+**保守的運用**（翻訳によるゲームへの影響を最小化したい場合）では、`skip_records` にこれらを追加して
+スキップすることを検討してください:
+
+```toml
+# 保守的運用の例（PERK / AVIF もスキップ）:
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+  "PERK:FULL", "AVIF:FULL",  # ← 追加（review-needed 扱い）
+]
+```
+
+### `INFO:RNAM` が既存 toml に残っていてもエラーではない
+
+v0.5 までの `iroiro.toml.example` には `INFO:RNAM` が含まれていましたが、v0.6 では NG ガイド §4 の
+標準である `INFO:NAM1`（NPC 会話本文）に置換しました。**既存ユーザーのカスタム `iroiro.toml` に
+`INFO:RNAM` が残っていてもエラーにはなりません**（未知 REC キーは WARNING 無しで許可・v0.5 仕様）。
+ただし意味的に重複するため、必要に応じて `INFO:NAM1` に置き換えることを推奨します。
+
+---
+
 ## LLM プロンプトのカスタマイズ（v0.5）
 
 v0.5 で LLM 挙動の中核 3 要素が `iroiro.toml` から編集可能になりました。翻訳方針の試行錯誤・
@@ -339,11 +526,16 @@ LLM が REC 型の文脈（魔法の効果名・書籍本文・NPC セリフ 等
 
 ```toml
 [iroiro.rec_hints]
-"MGEF:FULL" = "魔法の効果名。1〜4語程度の簡潔な表現。"
-"MGEF:DESC" = "魔法の効果の説明文。自然な日本語の文章。"
+"MGEF:DESC" = "魔法効果の説明文。自然な日本語の文章。"
 "BOOK:DESC" = "書籍の本文。物語風の自然な日本語。"
-"INFO:RNAM" = "NPC のセリフ（会話の応答）。自然な会話文。"
+"INFO:NAM1" = "NPC の会話本文。自然な会話文。"
 ```
+
+> **v0.6 で拡充**: `iroiro.toml.example` の `[iroiro.rec_hints]` は NG ガイド §4「Usually Safe
+> Translation Targets」に基づき 3 ゲーム（Skyrim / Fallout4 / Starfield）共通の翻訳候補レコードを
+> 網羅するよう拡充されました。`MGEF:FULL` / `FACT:FULL` / `RACE:FULL` / `CLAS:FULL` は
+> `skip_records` と重複するため rec_hints から除外されています（skip されるため・計画書 §7.2）。
+> 全種は `iroiro.toml.example` を参照してください。
 
 - **必ず quoted key**（`"MGEF:FULL"`）で書く（`:` は TOML bare key に使えないため）。
 - **空テーブル**（`[iroiro.rec_hints]` ヘッダのみ・中身 `{}`）は許可（REC ヒント無効化）。
@@ -425,7 +617,7 @@ uv run iroiro translate path/to/your_mod.xml --resume
 - 既存 `entries` の index はスキップ（`state=translated`、訳文を再利用）
 - 既存 `failed` の index は再試行せず保持（`state=failed`、元の `<Dest>` を保持）※ デフォルト動作・後述の `--retry-failed` で変更可能
 - `input_hash`（SHA256）が不一致 → 停止（入力 XML を変更した場合）
-- `skip_records_fingerprint` が不一致 → 停止（`--no-skip-default-records` / `--skip-records` を変更した場合）（v0.2）
+- `skip_records_fingerprint` が不一致 → 停止（`skip_records` / `--skip-records` を変更した場合）（v0.2・v0.6 で fingerprint 値が 12件→14件に変更）
 - JSON decode error → 停止（ユーザーにファイル削除を促す）
 
 ### failed の再試行（v0.4）
@@ -491,12 +683,13 @@ retry で `pending` に戻ったエントリは **翻訳が終わるまで元の
 
 ---
 
-## 翻訳スキップ REC 型（v0.2）
+## 翻訳スキップ REC 型（v0.2 / v0.6）
 
-Skyrim MOD の XML（`SSTXMLRessources` v2）で、`<REC>` が **内部管理用** レコード型の `<String>` は
-翻訳すると MOD が誤動作する可能性があるため、デフォルトで **12件の REC 型** をスキップ対象にする。
+Skyrim / Fallout4 / Starfield MOD の XML（`SSTXMLRessources` v2）で、`<REC>` が **内部管理用**
+レコード型の `<String>` は翻訳すると MOD が誤動作する可能性があるため、デフォルトで **14件の REC 型**
+をスキップ対象にする（v0.2 で導入・v0.6 で 12件 → 14件に拡充 + toml 必須化）。
 
-### デフォルトスキップリスト（12件）
+### デフォルトスキップリスト（14件・v0.6）
 
 | REC | 用途 |
 |---|---|
@@ -512,62 +705,78 @@ Skyrim MOD の XML（`SSTXMLRessources` v2）で、`<REC>` が **内部管理用
 | `EXPL:FULL` | Explosion name（爆発名） |
 | `HAZD:FULL` | Hazard name（危険物名） |
 | `BPTD:BPTN` | Body Part Data name（ボディパーツ名） |
+| `FLST:FULL` | FormID List name（フォーム ID リスト名・v0.6 追加） |
+| `KYWD:FULL` | Keyword name（キーワード名・v0.6 追加） |
+
+根拠は NG ガイド §3 Common Skip List / §9.1 Conservative Preset（**EDID を除く**・EDID は全レコード型
+フィールド名として現れるため `REC:FIELD` 形式の skip リストには不向き）。
 
 スキップされたエントリの `<Dest>` は元の値を保持し、`<Source>` で上書きされない（他のスキップ・失敗ケースと同じ挙動）。
 
-### 制御方法
+### 制御方法（v0.6 の完全置換セマンティクス）
 
-デフォルト動作（フラグ無し）は上記12件をスキップする。以下の3パターンで制御可能:
+v0.6 では `skip_records` は `iroiro.toml` 必須（CLI `--skip-records` で完全置換可能）。
+`--skip-records` は **3 状態** を区別します（`str | None = None` パターン・v0.5 の `retry_failed` と同形式）:
 
-#### 1. デフォルト + 追加スキップ
-
-`--skip-records` でデフォルト12件に追加してスキップ（OR）:
+#### 1. toml の skip_records を使用（デフォルト動作・`--skip-records` 省略）
 
 ```bash
-# デフォルト12件 + LCTN:FULL と ACTI:FULL を追加スキップ
-uv run iroiro translate INPUT.xml --skip-records "LCTN:FULL,ACTI:FULL"
+# iroiro.toml の skip_records（デフォルト14件）をそのまま使用
+uv run iroiro translate INPUT.xml
 ```
 
-#### 2. デフォルト無効化 + 全 REC 型を翻訳
+#### 2. 全件翻訳（`--skip-records ""` で明示的空 set）
 
-`--no-skip-default-records` 単独で、全 REC 型を翻訳対象にする（v0.1 互換動作）:
+`--no-skip-default-records` 廃止後の「全件翻訳」CLI 手段。toml の `skip_records` を空 set で完全置換:
 
 ```bash
-uv run iroiro translate INPUT.xml --no-skip-default-records
+uv run iroiro translate INPUT.xml --skip-records ""
 ```
 
-#### 3. デフォルト無効化 + 特定 REC 型のみスキップ
+または `iroiro.toml` で恒久的に全件翻訳:
 
-`--no-skip-default-records` + `--skip-records` の組合せで、デフォルトを無効化した上で
-特定 REC 型のみスキップ:
+```toml
+[iroiro]
+skip_records = []   # 空リスト（全件翻訳）
+```
+
+#### 3. 特定 REC 型のみスキップ（`--skip-records "..."` で完全置換）
+
+toml の `skip_records` を指定した set で **完全置換**（v0.5 までの「追加」セマンティクスから変更）:
 
 ```bash
-# MGEF:FULL（魔法効果名）だけをスキップし、他は全て翻訳
-uv run iroiro translate INPUT.xml --no-skip-default-records --skip-records "MGEF:FULL"
+# MGEF:FULL だけをスキップ（toml の14件は無視され、{MGEF:FULL} に完全置換）
+uv run iroiro translate INPUT.xml --skip-records "MGEF:FULL"
+
+# 複数指定（カンマ区切り）
+uv run iroiro translate INPUT.xml --skip-records "HDPT:FULL,FACT:FULL"
 ```
 
 #### `MGEF:FULL` と `RACE:FULL` だけを翻訳したい場合
 
 これらはデフォルトスキップリストに入っているが、翻訳を **希望する** ユーザーも多い。
-デフォルト12件のうち両者以外を再指定することで実現できる:
+v0.6 の完全置換セマンティクスでは、これら2件を **除外した** 12 件を `--skip-records` で再指定
+します（toml の14件を完全置換）:
 
 ```bash
 uv run iroiro translate INPUT.xml \
-  --no-skip-default-records \
-  --skip-records "HDPT:FULL,FURN:FULL,CLAS:FULL,DOOR:FULL,FACT:FULL,CLFM:FULL,TREE:FULL,EXPL:FULL,HAZD:FULL,BPTD:BPTN"
+  --skip-records "HDPT:FULL,FURN:FULL,CLAS:FULL,DOOR:FULL,FACT:FULL,CLFM:FULL,TREE:FULL,EXPL:FULL,HAZD:FULL,BPTD:BPTN,FLST:FULL,KYWD:FULL"
 ```
+
+または `iroiro.toml` の `skip_records` から `MGEF:FULL` / `RACE:FULL` を削除（恒久的）。
 
 ### 仕様の細かい点
 
 - `--skip-records` は **カンマ区切り**。各要素は前後空白を許容し、空要素は無視される。
 - 大文字小文字は区別しない（`hdpt:full` は `HDPT:FULL` に正規化される）。
-- 重複指定は自動で排除される。
+- 重複指定は自動で排除される（`frozenset` 化）。
 - `skip_records_fingerprint`（SHA256 of sorted canonical）が `progress.json` に保存され、
-  `--resume` 時に検証される。`--no-skip-default-records` / `--skip-records` を変更した場合は
-  `ValueError` で停止する（`input_hash` と同じパターン）。
-- v0.1 で作成された `progress.json`（`skip_records_fingerprint` フィールド無し = `""` 扱い）は、
-  `--no-skip-default-records` 指定時のみ resume 可能。デフォルト動作で resume すると
-  fingerprint 不一致で停止する（安全側）。エラーメッセージに従い `progress.json` を削除して再実行すること。
+  `--resume` 時に検証される。`skip_records` を変更した場合は `ValueError` で停止する
+  （`input_hash` と同じパターン・安全側）。
+- **v0.5 までの `progress.json` を v0.6 で resume する場合は fingerprint 不一致で停止します**
+  （12件 → 14件の変更のため）。`progress.json` を削除して再実行してください。
+- 空集合（`--skip-records ""` または `skip_records = []`）の fingerprint は `""` を返す特例
+  （v0.1 形式 `progress.json` との互換性のため）。
 
 ---
 

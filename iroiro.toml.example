@@ -1,4 +1,4 @@
-# iroiro-translator 設定ファイル（v0.3 / v0.4 / v0.5）
+# iroiro-translator 設定ファイル（v0.3 / v0.4 / v0.5 / v0.6）
 #
 # 使い方:
 #   1. このファイルを `iroiro.toml` にコピー
@@ -16,11 +16,42 @@
 #   ※ v0.5 新規（LLM 挙動中核・必須）の 3 項目は CLI フラグでの上書き非対応:
 #      ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]`` は
 #      ``iroiro.toml`` のみで指定する（セキュリティ・利便性のバランス）。
+#   ※ v0.6 新規（``skip_records``・必須）は CLI フラグ ``--skip-records`` で
+#      完全置換可能（後述）。
 #
 # 検索位置:
 #   - `--config PATH` で明示指定時はそのファイルのみ読む
 #   - 未指定時はカレントディレクトリ（コマンドを実行したディレクトリ）の
 #     `iroiro.toml` を探す（親ディレクトリへの遡りはしない）
+#
+# v0.6 での破壊的変更（Plan 006 §4 / §5 / §6）:
+#   - ``skip_records`` が **必須** になりました（``[iroiro]`` セクション内）。
+#     v0.5 までは ``DEFAULT_SKIP_RECORDS`` 定数（``iroiro/translator.py``）が
+#     コード内にありましたが、v0.6 で完全削除され ``iroiro.toml`` に移行しました
+#     （v0.5 の LLM 挙動中核 toml 化と同じ哲学・案 α 徹底版）。
+#     ``iroiro.toml`` に ``skip_records`` が無い場合、
+#     ``Error: [iroiro] skip_records is required in <path>`` で停止します。
+#     下記のデフォルト値（14 件）をそのまま使うか、適宜編集してください。
+#   - CLI ``--no-skip-default-records`` フラグは **廃止** されました
+#     （``DEFAULT_SKIP_RECORDS`` 定数が無くなったため意味を成さない）。
+#     代替手段: 「全件翻訳」したい場合は ``--skip-records ""``（明示的空文字）か
+#     ``iroiro.toml`` で ``skip_records = []`` を指定してください。
+#   - CLI ``--skip-records`` のセマンティクスが **完全置換** に変更されました。
+#     v0.5 までは「デフォルトへの追加」でしたが、v0.6 では toml の ``skip_records``
+#     を完全に置き換えます（``str | None = None`` パターン・3 状態）:
+#       - 省略（``None``）= toml の ``skip_records`` を使用
+#       - ``--skip-records ""``（明示空文字）= 空 set（全件翻訳）
+#       - ``--skip-records "HDPT:FULL,..."``（非空）= toml を完全置換
+#   - Skyrim / Fallout4 / Starfield の **3 ゲーム対応**。skip リスト 14 件と
+#     ``[iroiro.rec_hints]`` は NG ガイド §3 / §4 / §9.1 に基づき 3 ゲーム共通の
+#     「内部管理用 / 翻訳候補」レコードを網羅します。
+#   - 既存の ``iroiro.toml`` を流用する場合は **``skip_records``（14 件）を手動追記**
+#     する必要があります（``cp iroiro.toml.example iroiro.toml`` で上書きすると
+#     既存の API 設定が消えるため）。詳しくは docs/usage.md /
+#     docs/handoff/006-multi-game.md を参照。
+#   - v0.5 までの ``progress.json`` を v0.6 で ``--resume`` すると ``skip_records``
+#     の fingerprint 不一致（12 件 → 14 件）で停止します（安全側の挙動）。
+#     ``progress.json`` を削除して再実行してください。
 #
 # v0.5 での破壊的変更（Plan 005 §2.2 / §2.9）:
 #   - ``iroiro.toml`` は ``--dry-run`` 含む全操作で **必須** になりました。
@@ -52,6 +83,28 @@
 # concurrency   = 1                             # 同時リクエスト数（>= 1）
 # max_chars     = 4000                          # 1エントリの最大文字数（>= 0・0 は全件スキップ）
 # retry_failed  = false                         # resume 時に failed を再試行するか（bool 厳格・v0.4 追加）
+
+# === v0.6 新規（skip_records・必須） ===
+# ``skip_records`` は翻訳スキップ対象の REC 型（``REC:FIELD`` 形式）のリスト。
+# ``iroiro.toml`` にこれが無い場合、``Error: [iroiro] skip_records is required``
+# 等のエラーで停止します。下記のデフォルト値（NG ガイド §9.1 Conservative
+# Preset 準拠・EDID 抜き 14 件）をそのまま使うか、適宜編集してください。
+#
+# ※ 各要素は strip + 大文字正規化されます（``hdpt:full`` → ``HDPT:FULL``）。
+# ※ 重複は自動で除去されます。
+# ※ 空リスト ``[]`` も許可（全件翻訳・review-needed 運用時等）。
+# ※ v0.6 の破壊的変更: ``DEFAULT_SKIP_RECORDS`` 定数はコードから完全削除され、
+#    ``iroiro.toml`` の ``skip_records`` が必須になりました。CLI の
+#    ``--no-skip-default-records`` フラグも廃止されました。
+# ※ 3 ゲーム対応（Skyrim / Fallout4 / Starfield）: ``FLST:FULL`` / ``KYWD:FULL``
+#    は v0.6 で追加（FormID List / Keyword・3 ゲーム共通の内部管理用）。
+
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
 
 # === v0.5 新規（LLM 挙動中核・必須） ===
 # ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]`` は **必須** です。
@@ -88,21 +141,42 @@ reject_phrases = [
 ]
 
 [iroiro.rec_hints]
-"MGEF:FULL" = "魔法の効果名。1〜4語程度の簡潔な表現。"
-"MGEF:DESC" = "魔法の効果の説明文。自然な日本語の文章。"
-"ARMO:FULL" = "防具の名称。1〜4語程度。"
-"ARMO:DESC" = "防具の説明文。"
-"BOOK:FULL" = "書籍のタイトル。簡潔な表現。"
-"BOOK:DESC" = "書籍の本文。物語風の自然な日本語。"
-"WEAP:FULL" = "武器の名称。1〜4語程度。"
-"SPEL:FULL" = "スペル（能力）の名称。"
-"ACTI:FULL" = "アクティベータ（家具/看板等）の名称。"
-"ALCH:FULL" = "錬金術素材/薬の名称。"
-"ENCH:FULL" = "エンチャント（効果）の名称。"
-"INGR:FULL" = "錬金術素材の名称。"
-"NPC_:FULL" = "NPC の名称。固有名詞として扱う。"
-"FACT:FULL" = "派閥（ファクション）の名称。"
-"INFO:RNAM" = "NPC のセリフ（会話の応答）。自然な会話文。"
+# === 会話・クエスト・メッセージ ===
+"INFO:NAM1" = "NPC の会話本文。自然な会話文。"
+"INFO:NAM2" = "NPC の会話追加テキスト。"
+"DIAL:FULL" = "会話トピック・選択肢。簡潔な表現。"
 "QUST:FULL" = "クエストのタイトル。"
-"RACE:FULL" = "種族の名称。"
-"CLAS:FULL" = "クラス（職業）の名称。"
+"QUST:CNAM" = "クエストの目的テキスト。"
+"QUST:NNAM" = "クエストの進行ログ・ジャーナル。"
+"MESG:FULL" = "メッセージのタイトル。"
+"MESG:DESC" = "メッセージの本文。"
+
+# === 書籍・メモ ===
+"BOOK:FULL" = "書籍・メモ・ホロテープのタイトル。"
+"BOOK:DESC" = "書籍・メモ・端末の本文。物語風の自然な日本語。"
+
+# === NPC・アイテム・装備 ===
+"NPC_:FULL"  = "NPC の名称。固有名詞として扱う。"
+"WEAP:FULL" = "武器の名称。1〜4語程度。"
+"WEAP:DESC" = "武器の説明文。"
+"ARMO:FULL" = "防具・服・宇宙服の名称。1〜4語程度。"
+"ARMO:DESC" = "防具の説明文。"
+"AMMO:FULL" = "弾薬の名称。"
+"ALCH:FULL" = "薬・回復アイテム・食料・化学物質の名称。"
+"MISC:FULL" = "雑貨アイテムの名称。"
+"SPEL:FULL" = "スペル・能力の名称。"
+"SPEL:DESC" = "スペル・能力の説明文。"
+"PERK:FULL" = "パークの名称。"
+"PERK:DESC" = "パークの説明文。"
+"AVIF:FULL" = "Actor Value の名称（UI に表示される場合）。"
+
+# === 場所 ===
+"CELL:FULL" = "セル・場所の名称。"
+"LCTN:FULL" = "ロケーションの名称。"
+"WRLD:FULL" = "ワールドスペースの名称。"
+
+# === その他（既存維持・汎用化） ===
+"MGEF:DESC" = "魔法効果の説明文。自然な日本語の文章。"
+"ENCH:FULL" = "エンチャントの名称。"
+"ACTI:FULL" = "アクティベータ（家具・看板等）の名称。"
+"INGR:FULL" = "錬金素材の名称。"

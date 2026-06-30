@@ -19,5 +19,13 @@ Skyrim MOD の英文を日本語に翻訳する。
 
 reject_phrases = []
 
+# === v0.6 新規（必須）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
+
 [iroiro.rec_hints]
 "MGEF:FULL" = "魔法の効果名。"

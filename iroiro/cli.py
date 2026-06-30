@@ -8,7 +8,8 @@ Plan §5.4 / §6.7 で規定される ``translate`` サブコマンドを実装�
     3. ``--dry-run`` 時は件数表示のみで終了。
     4. 各 entry を処理:
        * state != ``pending`` なら skip。
-       * ``rec in skip_records`` → ``skipped``（REC 型スキップ・v0.2）。
+       * ``rec in skip_records`` → ``skipped``（REC 型スキップ・v0.2・
+         v0.6 で ``skip_records`` は ``iroiro.toml`` または ``--skip-records`` から構築）。
        * ``is_translation_needed(source, rec, skip_records)`` が False → ``skipped``。
        * ``len(source) > max_chars`` → ``skipped``。
        * ``Translator.translate_entry`` で翻訳。``IroiroError`` は catch して ``failed``。
@@ -38,7 +39,6 @@ from iroiro.progress import (
     compute_skip_records_fingerprint,
 )
 from iroiro.translator import (
-    DEFAULT_SKIP_RECORDS,
     ApiConfig,
     PromptConfig,
     Translator,
@@ -55,7 +55,8 @@ from iroiro.xml_io import parse_xml, serialize_xml
 app = typer.Typer(
     name="iroiro",
     help=(
-        "Skyrim MOD xTranslator 形式 XML を OpenAI 互換 LLM で英→日翻訳する。\n\n"
+        "Skyrim / Fallout4 / Starfield MOD の xTranslator 形式 XML を"
+        " OpenAI 互換 LLM で英→日翻訳する。\n\n"
         "詳細は docs/plans/001-initial.md を参照。"
     ),
     no_args_is_help=True,
@@ -172,15 +173,15 @@ def translate(
             "（未指定時は iroiro.toml → 内蔵デフォルト False）"
         ),
     ),
-    no_skip_default_records: bool = typer.Option(
-        False,
-        "--no-skip-default-records",
-        help="デフォルトの12件スキップを無効化（全 REC 型を翻訳対象にする）",
-    ),
-    skip_records_text: str = typer.Option(
-        "",
+    skip_records_text: str | None = typer.Option(
+        None,
         "--skip-records",
-        help='追加スキップ REC 型（カンマ区切り・例: "LCTN:FULL,ACTI:FULL"）',
+        help=(
+            "スキップ REC 型（カンマ区切り・例: \"LCTN:FULL,ACTI:FULL\"）。"
+            "省略時は iroiro.toml の skip_records を使用。"
+            "空文字 \"\" は明示的に空 set（全件翻訳）。"
+            "非空文字列は iroiro.toml の skip_records を完全置換。"
+        ),
     ),
 ) -> None:
     """入力XMLの ``<Source>`` を翻訳し、``<Dest>`` に書き戻したXMLを出力する。"""
@@ -228,14 +229,15 @@ def translate(
         ),
         max_chars=_resolve(max_chars, file_cfg, "max_chars", DEFAULT_MAX_CHARS),
     )
-    # skip_records 構築（Plan §5.2）:
-    # - デフォルト: DEFAULT_SKIP_RECORDS（12件）+ --skip-records の追加要素
-    # - --no-skip-default-records 単独: --skip-records のみ（空なら空 set = 全 REC 型翻訳）
-    # - --no-skip-default-records + --skip-records: 後者のセットのみ適用
-    if no_skip_default_records:
-        skip_records = _parse_skip_records(skip_records_text)
+    # v0.6（Plan 006 §4.3 / §5.4）: skip_records 構築。優先順位は
+    # ``--skip-records``（非 None・明示指定時）＞ iroiro.toml。
+    # - None（省略）: toml の skip_records を使用
+    # - ""（明示的空文字）: 空 set = 全件翻訳
+    # - 非空文字列: 完全置換（toml を無視）
+    if skip_records_text is None:
+        skip_records = cast(frozenset[str], file_cfg["skip_records"])
     else:
-        skip_records = DEFAULT_SKIP_RECORDS | _parse_skip_records(skip_records_text)
+        skip_records = _parse_skip_records(skip_records_text)
 
     # v0.4（Plan 004 §4.1）: retry_failed も同じ優先順位で解決する。
     # ``bool | None = None`` で3状態（未指定=None / True / False）を区別するため、

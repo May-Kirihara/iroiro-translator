@@ -202,6 +202,17 @@ LLM が「指示を受けた応答」（了解しました／翻訳します／�
 
 ## 翻訳スキップ REC 型（v0.2）
 
+> **⚠️ v0.6 での重要な変更**: 本節は v0.2 当時の設計記述です。v0.6（Plan 006）で以下のように変更されました。
+> 最新の仕様は後述「[skip_records の toml 化（v0.6）](#skip_records-の-toml-化v06)」節を参照してください。
+>
+> - `DEFAULT_SKIP_RECORDS` 定数は `iroiro/translator.py` から **完全削除** され、`iroiro.toml` の `skip_records`（必須）に移行（案 α 徹底版・v0.5 の LLM 挙動中核 toml 化と同パターン）
+> - スキップリストは 12 件 → **14 件** に拡充（`FLST:FULL` / `KYWD:FULL` 追加・NG ガイド §9.1 Conservative Preset 準拠・EDID 抜き）
+> - `--no-skip-default-records` フラグは **廃止**（DEFAULT が無いため意味を成さない）
+> - `--skip-records` は **完全置換** セマンティクスに変更（`str | None = None` パターン・3 状態区別）
+> - `is_translation_needed` の `skip_records` は必須引数化（`None` フォールバック削除）
+>
+> 以下は v0.2 当時の設計理由を歴史的記録として残したものです。
+
 Skyrim MOD の XML で `<REC>` が **内部管理用** レコード型の `<String>` を翻訳すると、
 MOD が誤動作する（内部IDとして使われている名前が変わってしまう等）。これを防ぐため、
 デフォルトで12件の REC 型を翻訳スキップする。
@@ -277,6 +288,92 @@ REC skip と言語 skip が **重複カウントされない** よう、dry-run 
 v0.1 で作成された `progress.json`（fingerprint フィールド無し = `""`）は:
 - `--no-skip-default-records` 指定時（空 set = `""`）→ resume 成功
 - デフォルト動作（`DEFAULT_SKIP_RECORDS` = 非`""`）→ fingerprint 不一致で停止（安全側）
+
+---
+
+## skip_records の toml 化（v0.6）
+
+v0.6 で `DEFAULT_SKIP_RECORDS` 定数を `iroiro/translator.py` から **完全削除** し、
+`iroiro.toml` の `[iroiro] skip_records`（必須）に移行した（案 α 徹底版）。設計判断と
+却下代替案の経緯は [実装計画 006 §4 / §5](plans/006-multi-game.md) を参照。これは
+v0.5 の「LLM 挙動中核の完全 toml 化」と同じ哲学を `skip_records` に拡張するもので、
+プロジェクト全体の一貫性を高める。
+
+### なぜ案 α（徹底版）か
+
+v0.5 と同じ判断基準。「内蔵デフォルト = 無」を字義通り実現するため、コードから定数を
+完全削除し toml を必須化した。案 β（コード内に予備デフォルトを残す）は v0.5 で既に
+却下されているため、`skip_records` も案 α で一本化した（計画書 §2.3 / §4.1）。
+
+### skip リスト 14 件（NG ガイド §9.1 Conservative Preset・EDID 抜き）
+
+v0.2 の 12 件に `FLST:FULL`（FormID List）/ `KYWD:FULL`（Keyword）を追加した 14 件。
+
+```
+HDPT:FULL  FURN:FULL  CLAS:FULL  DOOR:FULL  FACT:FULL  CLFM:FULL
+TREE:FULL  MGEF:FULL  RACE:FULL  EXPL:FULL  HAZD:FULL  BPTD:BPTN
+FLST:FULL  KYWD:FULL
+```
+
+- **根拠**: NG ガイド §3 Common Skip List / §9.1 Conservative Preset。3 ゲーム
+  （Skyrim / Fallout4 / Starfield）共通で「内部管理用レコード」として翻訳非推奨の最小セット。
+- **EDID は除外**: EDID は「全レコード型のフィールド名」として現れるため `REC:FIELD` 形式の
+  skip リストには不向き（ユーザー判断により今回の拡充対象から除外・計画書 §6）。
+- `MGEF:FULL` / `RACE:FULL` は v0.2 から引き続きスキップのまま。翻訳を希望する場合は
+  `iroiro.toml` の `skip_records` から該当レコードを削除するか、CLI で
+  `--skip-records "HDPT:FULL,..."`（13 件を再指定）で制御可能。
+
+### CLI セマンティクスの変更（破壊的）
+
+`DEFAULT_SKIP_RECORDS` 定数がコードから消えたため、CLI フラグも連動して変更した
+（計画書 §4.2 / §4.3）:
+
+- **`--no-skip-default-records` 廃止**: 「default を無効化」の意味を成さないため。
+  代替手段: `--skip-records ""`（明示的空 set = 全件翻訳）か `iroiro.toml` で
+  `skip_records = []`。
+- **`--skip-records` を完全置換セマンティクスに変更**: v0.5 までの「DEFAULT への追加」
+  から変更。`str | None = None` パターン（v0.5 の `retry_failed` と同形式）で 3 状態を区別:
+
+  | `--skip-records` 指定 | 意味 |
+  |---|---|
+  | 省略（`None`） | toml の `skip_records` を使用 |
+  | `--skip-records ""` | 明示的に空 set（全件翻訳） |
+  | `--skip-records "HDPT:FULL,..."` | toml を完全置換 |
+
+- **`is_translation_needed` の全引数必須化**: `skip_records` の `None` フォールバックを
+  削除し、`rec` も必須化（`def is_translation_needed(source, rec, skip_records)`・計画書 §4.4）。
+  `skip_records` 省略時は `TypeError`（暗黙フォールバックを許さない・意図的）。
+
+### 3 ゲーム対応（Skyrim / Fallout4 / Starfield）
+
+本変更の主目的の一つ。`[iroiro.rec_hints]` を NG ガイド §4「Usually Safe Translation
+Targets」に基づき拡充し、3 ゲーム共通の翻訳候補レコード（`AMMO:FULL` / `MISC:FULL` /
+`WRLD:FULL` / `INFO:NAM1` 等・Fallout4 / Starfield で出現）を網羅した。詳細は
+`iroiro.toml.example` と [実装計画 006 §7](plans/006-multi-game.md) を参照。
+
+### skip リストと rec_hints の重複ゼロ方針
+
+skip リスト 14 件と `[iroiro.rec_hints]` の重複は **意図的にゼロ** にする（計画書 §7.3）。
+`FACT:FULL` / `RACE:FULL` / `CLAS:FULL` / `MGEF:FULL` は skip されるため rec_hints から除外
+（`MGEF:DESC` は維持）。ユーザーが skip リストから外したレコードに対応する rec_hints が
+存在しない場合は、ヒント無しで翻訳される（v0.2 と同じ・ユーザー責任）。
+
+### `PERK` / `AVIF` の扱いに関する注記
+
+`PERK:FULL` / `PERK:DESC` / `AVIF:FULL` は NG ガイド内で扱いが揺れている:
+- §4「Usually Safe Translation Targets」では safe target（翻訳候補）
+- §5「Review-Needed List」/ §9.1「Conservative Preset review-needed」では review-needed
+
+iroiro は review-needed 状態を持たないため、本計画では §4 に従い rec_hints に採用した
+（翻訳候補）。ただし **保守的運用では注意が必要**（計画書 §7.4）。NG ガイド §5 を参考に
+スキップしたい場合は `iroiro.toml` の `skip_records` に追加する。
+
+### `INFO:RNAM` → `INFO:NAM1` への整理
+
+v0.2 の `iroiro.toml.example` にあった `INFO:RNAM` を、NG ガイド §4 の標準である
+`INFO:NAM1`（NPC セリフ本文）に置換した（計画書 §4.7）。既存ユーザーのカスタム toml に
+`INFO:RNAM` が残っていてもエラーにはならない（未知 REC キーは WARNING 無しで許可・
+v0.5 仕様）。必要に応じて `INFO:NAM1` に置き換えることを推奨する。
 
 ---
 

@@ -6,6 +6,9 @@
 # v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
 #   api_base の検証エラーが先に発生するため、3 新項目の検証は到達しない。
 #   WP-2 完了後も本テストの期待（IroiroError）は変わらない。
+#
+# v0.6 追加分（Plan 006 §5）: skip_records
+#   同様に api_base の検証エラーが先に発生するため検証は到達しない。
 
 [iroiro]
 api_base = ""
@@ -15,6 +18,14 @@ system_prompt = """
 Skyrim MOD の英文を日本語に翻訳する。
 """
 reject_phrases = ["了解", "翻訳します"]
+
+# === v0.6 新規（必須）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
 
 [iroiro.rec_hints]
 "MGEF:FULL" = "魔法の効果名。"

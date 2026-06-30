@@ -28,8 +28,10 @@ class RunConfig:
         resume: ``--resume`` フラグ。progress.json を読んで続きから。
         dry_run: ``--dry-run`` フラグ。LLM を呼ばず件数表示のみ。
         verbose: ``-v`` フラグ。詳細ログ。
-        skip_records: スキップ対象 REC 型のセット（v0.2 追加）。
-            ``--no-skip-default-records`` / ``--skip-records`` から構築される。
+        skip_records: スキップ対象 REC 型のセット（v0.2 追加・v0.6 で toml 必須化）。
+            ``iroiro.toml`` の ``skip_records`` または CLI ``--skip-records`` から
+            構築される。v0.6 で :data:`DEFAULT_SKIP_RECORDS` 定数は削除されコード内
+            デフォルトは無い（Plan 006 §5・案 α 徹底版）。
         retry_failed: ``--retry-failed`` フラグ（v0.4 追加）。resume 時に
             ``failed`` エントリを ``state=pending`` に戻して再翻訳対象にする。
             デフォルト ``False``（後方互換・v0.3 までと同じ挙動）。優先順位は
@@ -63,10 +65,11 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
         ``[iroiro]`` テーブルの dict（**型検証・値域検証済み**）。
         v0.5 では ``system_prompt`` / ``reject_phrases`` / ``rec_hints`` の
         3 新項目が必須（``reject_phrases`` は ``frozenset[str]`` に normalize 済み・
-        ``rec_hints`` は ``dict[str, str]`` のまま）。
+        ``rec_hints`` は ``dict[str, str]`` のまま）。v0.6 では ``skip_records``
+        も必須（``frozenset[str]`` に normalize 済み・Plan 006 §5）。
 
     Raises:
-        IroiroError: ファイル無し・``[iroiro]`` セクション無し・3 新項目のいずれか欠損・
+        IroiroError: ファイル無し・``[iroiro]`` セクション無し・4 必須項目のいずれか欠損・
             パースエラー・型エラー・値域エラー・``[iroiro]`` がテーブルでない・
             ``[iroiro.rec_hints]`` がテーブルでない。
 
@@ -76,7 +79,12 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
     - ``[iroiro]`` セクション無しも ``{}`` 返却ではなく ``IroiroError``
     - ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]`` は必須
 
-    検証ルール（Plan 003 §4.5.1 + Plan 005 §2.5）:
+    v0.6 の破壊的変更（Plan 006 §5.3）:
+
+    - ``skip_records`` が必須（``[iroiro] skip_records`` 配列・欠損時 ``IroiroError``）
+    - :data:`DEFAULT_SKIP_RECORDS` 定数はコードから完全削除（案 α 徹底版）
+
+    検証ルール（Plan 003 §4.5.1 + Plan 005 §2.5 + Plan 006 §5.2）:
 
         ============  =======  ===========  =====================================
         キー          型       値域          備考
@@ -91,6 +99,8 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
         ``system_prompt`` ``str`` 非空       strip 後も非空・``""`` / ``"   "`` 拒否
         ``reject_phrases`` ``list[str]`` 各要素非空  ``[]`` 許可・重複は ``frozenset`` 化
         ``rec_hints`` ``dict[str, str]`` 各キー/値非空  ``{}`` 許可・``bool`` 拒否
+        ``skip_records`` ``list[str]`` 各要素非空  ``[]`` 許可・重複は ``frozenset`` 化・
+                                                   ``strip().upper()`` で正規化（v0.6）
         ============  =======  ===========  =====================================
 
     ``bool`` は全ての数値フィールドで拒否（Python ``bool ⊂ int`` 事故防止）。
@@ -158,6 +168,11 @@ def load_config(explicit_path: Path | None) -> dict[str, object]:
     # どうかでテーブル存在判定する。
     if iroiro_table.get("rec_hints") is None:
         raise IroiroError(f"[iroiro.rec_hints] table is required in {path}")
+
+    # v0.6（Plan 006 §5.3）: ``skip_records`` も必須。``DEFAULT_SKIP_RECORDS`` 定数は
+    # 完全削除されコード内デフォルトが無いため、toml 必須チェックで担保する。
+    if "skip_records" not in result:
+        raise IroiroError(f"[iroiro] skip_records is required in {path}")
 
     # 設定が1件以上読み込まれた場合、INFO ログで出力（N3）。
     if result:
@@ -340,6 +355,45 @@ def _validate_rec_hints(
     return normalized
 
 
+def _validate_skip_records(
+    v: object, key: str, path: Path
+) -> frozenset[str]:
+    """``skip_records`` の ``list[str]`` 検証と ``frozenset[str]`` normalize（v0.6・Plan 006 §5.2）。
+
+    :func:`_validate_reject_phrases` と **対称的な厳格性** で実装（Codex review 指摘）。
+
+    制約:
+      - ``list`` 型のみ許可（文字列スカラー拒否）
+      - 各要素は ``str`` のみ（``int`` / ``bool`` 拒否・``bool ⊂ int`` 事故防止）
+      - 各要素は strip 後非空（``""`` / ``"   "`` 拒否）
+      - 大文字正規化（``.strip().upper()``・``_parse_skip_records`` と同様）
+      - 空リスト ``[]`` は許可（全件翻訳・``compute_skip_records_fingerprint`` の
+        空集合特例と整合・Plan 006 §4.5）
+      - 重複は ``frozenset`` 化で自動除去
+
+    戻り値は ``frozenset[str]``。``RunConfig.skip_records`` に直接代入可能。
+    """
+    if not isinstance(v, list):
+        raise IroiroError(
+            f"{key} must be a list in {path}"
+        )
+    normalized: set[str] = set()
+    for i, elem in enumerate(v):
+        # ``bool ⊂ int`` 事故防止: ``isinstance(True, str)`` は False なので
+        # ``bool`` は ``str`` 検査で弾かれるが、明示的に拒否する（N2・厳格型検証思想）
+        if isinstance(elem, bool) or not isinstance(elem, str):
+            raise IroiroError(
+                f"{key}[{i}] must be non-empty str in {path}"
+            )
+        stripped = elem.strip()
+        if stripped == "":
+            raise IroiroError(
+                f"{key}[{i}] must be non-empty str in {path}"
+            )
+        normalized.add(stripped.upper())
+    return frozenset(normalized)
+
+
 # key -> validator（戻り値は検証済みの str/int/float/bool/frozenset/dict・dict[str, object] に代入可能）
 _VALIDATORS: dict[str, Callable[[object, str, Path], object]] = {
     "api_base": _validate_str_nonempty,
@@ -352,4 +406,5 @@ _VALIDATORS: dict[str, Callable[[object, str, Path], object]] = {
     "system_prompt": _validate_system_prompt,  # v0.5 追加
     "reject_phrases": _validate_reject_phrases,  # v0.5 追加
     "rec_hints": _validate_rec_hints,  # v0.5 追加
+    "skip_records": _validate_skip_records,  # v0.6 追加（Plan 006 §5.2）
 }

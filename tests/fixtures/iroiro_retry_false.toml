@@ -5,6 +5,8 @@
 # （dict のキーに含まれる点が「未記述」と異なる・呼出側の _resolve で False が明示採用される）。
 #
 # v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
+#
+# v0.6 追加分（Plan 006 §5）: skip_records
 
 [iroiro]
 retry_failed = false
@@ -14,6 +16,14 @@ system_prompt = """
 Skyrim MOD の英文を日本語に翻訳する。
 """
 reject_phrases = ["了解", "翻訳します"]
+
+# === v0.6 新規（必須）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
 
 [iroiro.rec_hints]
 "MGEF:FULL" = "魔法の効果名。"

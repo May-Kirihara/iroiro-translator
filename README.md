@@ -1,6 +1,6 @@
 # iroiro-translator
 
-Skyrim MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods/30918) 形式 XML
+Skyrim / Fallout4 / Starfield MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods/30918) 形式 XML
 （`SSTXMLRessources` v2）の `<Source>` 英文を、OpenAI 互換 LLM で `<Dest>` に日本語翻訳する
 **バッチ CLI** ツール。ローカル LLM（llama.cpp server / Gemma 系 12B 想定）を前提とする。
 
@@ -22,10 +22,11 @@ Skyrim MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods
 - **BOM / CRLF / `standalone="yes"` 宣言の保持** — xTranslator 互換
 - **プレースホルダ保護** — `<alias=NAME>`, `<br>`, `%{...}`, `\n`, `\r`, `#` 等の出現回数を検証
 - **失敗時の `<Dest>` 保護** — 翻訳失敗・スキップ時は元の `<Dest>` を保持し、`<Source>` で上書きしない
-- **翻訳スキップ REC 型**（v0.2）— 内部管理用レコード（`HDPT:FULL` 等12件）を自動スキップ。`--no-skip-default-records` / `--skip-records` で制御。詳細は [docs/usage.md](docs/usage.md)
+- **翻訳スキップ REC 型**（v0.2 / **v0.6 で toml 必須化**）— 内部管理用レコード（`HDPT:FULL` 等14件）を自動スキップ。v0.6 で `DEFAULT_SKIP_RECORDS` 定数をコードから完全削除し、`iroiro.toml` の `skip_records`（必須）に移行。CLI `--no-skip-default-records` は廃止・`--skip-records` は toml を完全置換するセマンティクスに変更（**後方互換性の破れ**・3 ゲーム対応）。詳細は [docs/usage.md](docs/usage.md)
 - **設定ファイル**（v0.3）— 繰り返し使う設定（LLM エンドポイント・API キー・モデル名・タイムアウト等）を `iroiro.toml` に書いておけます。`.gitignore` 対象・環境依存情報をプロジェクトに混入させない。詳細は [docs/usage.md](docs/usage.md)
 - **failed エントリの再試行**（v0.4）— LLM の一時的エラー等で `failed` になったエントリを `--retry-failed` で再翻訳対象に戻せる。`iroiro.toml` の `retry_failed = true` でデフォルト化も可。詳細は [docs/usage.md](docs/usage.md)
 - **LLM プロンプト・エラー判定語句の完全 toml 化**（v0.5）— `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` の LLM 挙動中核を `iroiro.toml` で編集可能。コード内のハードコード定数を完全削除。`iroiro.toml` が `--dry-run` 含む全操作で必須になりました（**後方互換性の破れ**・詳細は [docs/usage.md](docs/usage.md)）
+- **3 ゲーム対応 + skip_records の toml 化**（v0.6）— Skyrim / Fallout4 / Starfield の 3 ゲーム共通の skip リスト（14件）と `[iroiro.rec_hints]` に拡充。`skip_records` が `iroiro.toml` 必須に・`--no-skip-default-records` 廃止・`--skip-records` を完全置換セマンティクスに変更（**後方互換性の破れ**・詳細は [docs/usage.md](docs/usage.md)）
 - **再開機能**（`--resume`） — 進捗ファイルから続きを実行
 - **dry-run モード**（`--dry-run`） — LLM を呼ばず処理件数のみ表示
 - **並列実行**（`--concurrency`） と **HTTP タイムアウト設定**（`--timeout`）
@@ -132,11 +133,13 @@ CLI フラグ全一覧・設定例・トラブルシュートは [詳細な使�
 - [実装計画 v0.3](docs/plans/003-config-file.md) — v0.3 設定ファイル（`iroiro.toml`）の設計判断
 - [実装計画 v0.4](docs/plans/004-retry-failed.md) — v0.4 failed エントリ再試行（`--retry-failed`）の設計判断
 - [実装計画 v0.5](docs/plans/005-llm-config.md) — v0.5 LLM プロンプト・エラー判定語句の完全 toml 化の設計判断
+- [実装計画 v0.6](docs/plans/006-multi-game.md) — v0.6 Fallout4 / Starfield 対応 + skip_records の toml 化の設計判断
 - [引き継ぎ v0.1](docs/handoff/001-initial.md) — v0.1 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.2](docs/handoff/002-skip-records.md) — v0.2 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.3](docs/handoff/003-config-file.md) — v0.3 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.4](docs/handoff/004-retry-failed.md) — v0.4 完了時の引き継ぎメモ・検証結果
 - [引き継ぎ v0.5](docs/handoff/005-llm-config.md) — v0.5 完了時の引き継ぎメモ・検証結果
+- [引き継ぎ v0.6](docs/handoff/006-multi-game.md) — v0.6 完了時の引き継ぎメモ・検証結果
 
 ---
 

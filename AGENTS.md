@@ -7,7 +7,7 @@ AI agent（Claude Code, Cursor, Codex 等）がこのリポジトリで作業す
 
 ## プロジェクト概要
 
-`iroiro` は Skyrim MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods/30918)
+`iroiro` は Skyrim / Fallout4 / Starfield MOD の [xTranslator](https://www.nexusmods.com/skyrimspecialedition/mods/30918)
 形式 XML（`SSTXMLRessources` v2）の `<Source>` 英文を、OpenAI 互換 LLM（ローカル LLM 想定）で
 `<Dest>` に日本語翻訳する **バッチ CLI** ツール（Python 3.12+ / uv 管理）。出力 XML の
 BOM / CRLF / `standalone="yes"` 宣言 / 空要素 `<X></X>` 形式を保持し、xTranslator との
@@ -19,7 +19,7 @@ BOM / CRLF / `standalone="yes"` 宣言 / 空要素 `<X></X>` 形式を保持し�
 
 ```bash
 uv sync                                        # 依存関係インストール（dev extras 含む）
-uv run pytest                                  # テスト（191件）
+uv run pytest                                  # テスト（208件）
 uv run pytest -k "xml_io"                      # 個別テスト
 uv run ruff check iroiro/ tests/               # lint
 uv run mypy iroiro                             # 型チェック
@@ -54,7 +54,9 @@ iroiro-translator/
 > `iroiro.toml`（実体・個人環境依存の LLM 設定）は `.gitignore` 対象でコミットされません。
 > 各ユーザーが `cp iroiro.toml.example iroiro.toml` で作成します。**v0.5 では LLM 挙動中核**
 > （`system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`）も `iroiro.toml` に保持し、
-> `iroiro.toml` は `--dry-run` を含む **全操作で必須** になりました。
+> `iroiro.toml` は `--dry-run` を含む **全操作で必須** になりました。**v0.6 では `skip_records`**
+> （翻訳スキップ REC 型リスト・14 件デフォルト）も `iroiro.toml` 必須になり、
+> `DEFAULT_SKIP_RECORDS` 定数はコードから完全削除されました（案 α 徹底版・v0.5 と同じ哲学）。
 
 ---
 
@@ -87,7 +89,7 @@ iroiro-translator/
 | 対象 | 理由 |
 |---|---|
 | `sample/` 配下 | 第三者著作物の MOD XML。`.gitignore` で除外済み。コミットしないこと |
-| `iroiro.toml`（実体） | 個人環境依存の LLM 設定（エンドポイント・API キー等・**v0.5 では LLM 挙動中核の `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` も含む・全操作で必須**）。`.gitignore` 対象・commit しない。`iroiro.toml.example`（雛形）は git 管理対象なので編集してよい |
+| `iroiro.toml`（実体） | 個人環境依存の LLM 設定（エンドポイント・API キー等・**v0.5 では LLM 挙動中核の `system_prompt` / `reject_phrases` / `[iroiro.rec_hints]`・v0.6 では `skip_records` も含む・全操作で必須**）。`.gitignore` 対象・commit しない。`iroiro.toml.example`（雛形）は git 管理対象なので編集してよい |
 | `uv.lock` | uv が管理。手動編集しない（`uv sync` / `uv add` 経由でのみ更新） |
 | `docs/plans/`, `docs/handoff/` | 歴史的記録。変更が必要な場合は新規ファイル（`002-*.md` 等）で作成 |
 | テストの weakning / skip | 正当な理由がある場合のみ `@pytest.mark.skipif` を使用。安易な `pytest.skip` は禁止 |
@@ -114,10 +116,14 @@ uv run mypy iroiro                     # 型チェック クリーン
 - **CLI フラグ追加・変更時** → `README.md` / `docs/usage.md` を更新
 - **新モジュール追加時** → `docs/development.md` のモジュール構成を更新
 - **重大な変更** → `docs/plans/` に新規ファイル（`002-*.md` 等）で文書化
-- **LLM 挙動中核のデフォルト値編集時（v0.5）** → `system_prompt` / `reject_phrases` /
-  `[iroiro.rec_hints]` のデフォルト値を変える場合は `iroiro.toml.example` と該当 fixtures を
-  **同時に** 更新すること。実装コードにデフォルトは存在しない（v0.5 で完全削除）のでコード側の
-  同期は不要だが、テストヘルパー（`tests/conftest.py` の `default_prompt_config`）も確認すること
+- **LLM 挙動中核のデフォルト値編集時（v0.5 / v0.6）** → `system_prompt` / `reject_phrases` /
+  `[iroiro.rec_hints]`（v0.5）/ `skip_records`（v0.6）のデフォルト値を変える場合は
+  `iroiro.toml.example` と該当 fixtures を **同時に** 更新すること。実装コードにデフォルトは
+  存在しない（v0.5 で LLM 挙動中核・v0.6 で `DEFAULT_SKIP_RECORDS` が完全削除）のでコード側の
+  同期は不要だが、テストヘルパー（`tests/conftest.py` の `default_prompt_config` /
+  `default_skip_records`）も確認すること。また `iroiro.toml.example` の `skip_records` /
+  `rec_hints` を編集する場合は `tests/test_cli.py` の T168（`expected_records` /
+  `required_hints` と整合）も併せて更新すること
 
 ---
 
@@ -158,3 +164,5 @@ Conventional Commits 風のプレフィックスを使用:
 - [docs/handoff/004-retry-failed.md](docs/handoff/004-retry-failed.md) — v0.4 完了時の引き継ぎメモ・検証結果
 - [docs/plans/005-llm-config.md](docs/plans/005-llm-config.md) — v0.5 LLM プロンプト・エラー判定語句の完全 toml 化（`system_prompt` / `reject_phrases` / `[iroiro.rec_hints]` の必須化・`PromptConfig` 注入）の設計判断・却下代替案
 - [docs/handoff/005-llm-config.md](docs/handoff/005-llm-config.md) — v0.5 完了時の引き継ぎメモ・検証結果
+- [docs/plans/006-multi-game.md](docs/plans/006-multi-game.md) — v0.6 Fallout4 / Starfield 対応 + skip_records の toml 化（`DEFAULT_SKIP_RECORDS` 完全削除・`skip_records` 必須化・skip リスト 14件拡充・CLI `--no-skip-default-records` 廃止・`--skip-records` 完全置換化）の設計判断・却下代替案
+- [docs/handoff/006-multi-game.md](docs/handoff/006-multi-game.md) — v0.6 完了時の引き継ぎメモ・検証結果

@@ -12,6 +12,11 @@
 #   これらは WP-1 段階では load_config の未知キー扱い（WARNING + 無視）となり、
 #   既存テスト（T89 等）の result dict には含まれない。WP-2 完了後に必須検証が
 #   走り result dict に含まれるようになる（その際に既存テストの assertion を更新）。
+#
+# v0.6 追加分（Plan 006 §5）: skip_records
+#   v0.6 で [iroiro] skip_records が必須化（案 α 徹底版・DEFAULT_SKIP_RECORDS 削除）。
+#   WP-1 段階では未知キー扱い（WARNING + 無視）。WP-2 完了後に必須検証が走り
+#   result dict に frozenset[str] として含まれるようになる。
 
 [iroiro]
 api_base    = "http://from-toml:9999/v1"
@@ -39,6 +44,14 @@ reject_phrases = [
   "以下に訳します", "訳文を示します",
   "以下の通りです", "以下の通りとなります", "次のようになります",
   "上記の通りです",
+]
+
+# === v0.6 新規（必須・NG ガイド §9.1 Conservative Preset・EDID 抜き）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
 ]
 
 [iroiro.rec_hints]

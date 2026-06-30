@@ -19,17 +19,15 @@ T81/T81b（``compute_skip_records_fingerprint``）。
         async def translate_entry(self, source: str, rec: str) -> str: ...
         async def aclose(self) -> None: ...
 
-    def is_translation_needed(source: str, rec: str = "", skip_records: frozenset[str] | None = None) -> bool: ...
+    def is_translation_needed(source: str, rec: str, skip_records: frozenset[str]) -> bool: ...
     def _parse_skip_records(text: str) -> frozenset[str]: ...
     def contains_japanese(text: str) -> bool: ...
 
-    DEFAULT_SKIP_RECORDS: frozenset[str]  # v0.2 追加・12件のデフォルトスキップ REC 型
+    ※ v0.6（Plan 006 §4.4）: ``is_translation_needed`` は ``rec`` / ``skip_records``
+       共に必須引数化された。``DEFAULT_SKIP_RECORDS`` 定数は完全削除されコード内
+       デフォルトは無い（``iroiro.toml`` の ``skip_records`` から注入・案 α 徹底版）。
 
-    ※ `client` 引数はテスト容易性のための DI（WP-2 実装に委ねる）。Plan §6.4 に
-       `__init__(self, cfg)` とあるが、`httpx.MockTransport` を注入するための
-       オプショナル引数として追加を想定。
-
-モック戦略:
+    モック戦略:
   - `httpx.MockTransport(handler)` を `openai.AsyncOpenAI(http_client=...)` に注入
   - handler はリクエストごとにステータス/本文を返す
   - リトライ時の指数バックオフは conftest の autouse fixture で即座に完了
@@ -55,7 +53,6 @@ from iroiro.errors import IroiroError
 from iroiro.models import StringEntry
 from iroiro.progress import compute_skip_records_fingerprint
 from iroiro.translator import (
-    DEFAULT_SKIP_RECORDS,
     ApiConfig,
     Translator,
     _parse_skip_records,
@@ -426,13 +423,13 @@ def test_T41_japanese_source_not_needed() -> None:
     Plan §5.7.1: contains_japanese が True なら is_translation_needed は False。
     """
     # 漢字
-    assert is_translation_needed("棺") is False
+    assert is_translation_needed("棺", "", frozenset()) is False
     # ひらがな
-    assert is_translation_needed("こんにちは") is False
+    assert is_translation_needed("こんにちは", "", frozenset()) is False
     # カタカナ
-    assert is_translation_needed("ストリーム") is False
+    assert is_translation_needed("ストリーム", "", frozenset()) is False
     # 混在
-    assert is_translation_needed("魔法の指輪") is False
+    assert is_translation_needed("魔法の指輪", "", frozenset()) is False
 
 
 def test_T41_contains_japanese_breakdown() -> None:
@@ -454,7 +451,7 @@ def test_T41_contains_japanese_breakdown() -> None:
 
 def test_T41b_empty_source_skipped() -> None:
     """T41b: 空文字列 Source は翻訳不要（Plan §5.7.1）。"""
-    assert is_translation_needed("") is False
+    assert is_translation_needed("", "", frozenset()) is False
 
 
 # ===========================================================================
@@ -463,9 +460,9 @@ def test_T41b_empty_source_skipped() -> None:
 
 def test_T42_whitespace_only_source_skipped() -> None:
     """T42: 空白のみ Source は翻訳不要（Plan §5.7.1 v0.3）。"""
-    assert is_translation_needed("   ") is False
-    assert is_translation_needed("\t\n") is False
-    assert is_translation_needed(" \r\n ") is False
+    assert is_translation_needed("   ", "", frozenset()) is False
+    assert is_translation_needed("\t\n", "", frozenset()) is False
+    assert is_translation_needed(" \r\n ", "", frozenset()) is False
 
 
 # ===========================================================================
@@ -477,15 +474,15 @@ def test_T43_non_ascii_english_is_target() -> None:
 
     Plan §5.7.1 v0.3: 日本語文字を含まなければ non-ASCII でも翻訳対象。
     """
-    assert is_translation_needed("café") is True
-    assert is_translation_needed("\u201cHello\u201d") is True  # curly double quotes
-    assert is_translation_needed("Wait\u2026") is True  # ellipsis …
-    assert is_translation_needed("Fireball") is True  # plain ASCII
+    assert is_translation_needed("café", "", frozenset()) is True
+    assert is_translation_needed("\u201cHello\u201d", "", frozenset()) is True  # curly double quotes
+    assert is_translation_needed("Wait\u2026", "", frozenset()) is True  # ellipsis …
+    assert is_translation_needed("Fireball", "", frozenset()) is True  # plain ASCII
 
 
 def test_T43b_mixed_japanese_and_english_skipped() -> None:
     """T43 補足: 英語 + 日本語混在はスキップ（日本語を含むため）。"""
-    assert is_translation_needed("Fireball 火の玉") is False
+    assert is_translation_needed("Fireball 火の玉", "", frozenset()) is False
 
 
 # ===========================================================================
@@ -632,42 +629,45 @@ async def test_postprocess_trim_whitespace(default_prompt_config) -> None:
 # ===========================================================================
 # v0.2: T56-T63 — is_translation_needed の REC 型スキップ拡張
 #
-# Plan §5.1: is_translation_needed(source, rec="", skip_records=None)
+# Plan §5.1: is_translation_needed(source, rec, skip_records)
 #   * rec != "" かつ rec in skip_records → False（スキップ）
 #   * それ以外は空/空白/日本語混入の既存判定にフォールバック
-#   * skip_records=None の場合は DEFAULT_SKIP_RECORDS を使用
+#
+# v0.6（Plan 006 §4.4）: ``skip_records`` は必須引数（``None`` フォールバック廃止）。
+# ``DEFAULT_SKIP_RECORDS`` 定数は削除され、テストは ``default_skip_records`` fixture
+# （conftest.py・v0.6 の 14 件デフォルト）または ``frozenset()`` を明示渡しする。
 # ===========================================================================
 
 
-def test_T56_default_skip_hdpt_full() -> None:
+def test_T56_default_skip_hdpt_full(default_skip_records: frozenset[str]) -> None:
     """T56: HDPT:FULL はデフォルトスキップリストに入っている → False。
 
-    skip_records 省略時は DEFAULT_SKIP_RECORDS が使われる。
+    ``default_skip_records`` fixture（v0.6 の 14 件デフォルト）を使用。
     """
-    assert is_translation_needed("Hello", "HDPT:FULL") is False
+    assert is_translation_needed("Hello", "HDPT:FULL", default_skip_records) is False
 
 
 def test_T57_empty_skip_records_translates() -> None:
     """T57: skip_records=frozenset() の場合は HDPT:FULL でも翻訳対象 → True。
 
-    ``--no-skip-default-records`` 単独指定時の挙動に対応。
+    ``--skip-records ""``（明示的空 set・全件翻訳）の挙動に対応。
     """
-    assert is_translation_needed("Hello", "HDPT:FULL", skip_records=frozenset()) is True
+    assert is_translation_needed("Hello", "HDPT:FULL", frozenset()) is True
 
 
-def test_T58_default_skip_mgef_full() -> None:
+def test_T58_default_skip_mgef_full(default_skip_records: frozenset[str]) -> None:
     """T58: MGEF:FULL はデフォルトスキップリストに入っている → False。"""
-    assert is_translation_needed("Hello", "MGEF:FULL") is False
+    assert is_translation_needed("Hello", "MGEF:FULL", default_skip_records) is False
 
 
-def test_T59_weap_full_not_in_default_list() -> None:
+def test_T59_weap_full_not_in_default_list(default_skip_records: frozenset[str]) -> None:
     """T59: WEAP:FULL はデフォルトスキップリストに入っていない → True（翻訳対象）。"""
-    assert is_translation_needed("Iron Sword", "WEAP:FULL") is True
+    assert is_translation_needed("Iron Sword", "WEAP:FULL", default_skip_records) is True
 
 
-def test_T60_bptd_bptn_skipped() -> None:
+def test_T60_bptd_bptn_skipped(default_skip_records: frozenset[str]) -> None:
     """T60: BPTD:BPTN（```:FULL``` 以外）もデフォルトスキップリストで機能 → False。"""
-    assert is_translation_needed("Head", "BPTD:BPTN") is False
+    assert is_translation_needed("Head", "BPTD:BPTN", default_skip_records) is False
 
 
 def test_T61_empty_source_skipped_even_if_rec_not_in_list() -> None:
@@ -675,9 +675,9 @@ def test_T61_empty_source_skipped_even_if_rec_not_in_list() -> None:
 
     REC 型スキップより空文字スキップが優先される（フォールバック判定）。
     """
-    assert is_translation_needed("", "HDPT:FULL") is False
+    assert is_translation_needed("", "HDPT:FULL", frozenset()) is False
     # REC 型がリスト外でも空ならスキップ
-    assert is_translation_needed("", "WEAP:FULL") is False
+    assert is_translation_needed("", "WEAP:FULL", frozenset()) is False
 
 
 def test_T62_japanese_source_skipped_even_if_rec_not_in_list() -> None:
@@ -686,48 +686,51 @@ def test_T62_japanese_source_skipped_even_if_rec_not_in_list() -> None:
     REC 型がリスト外でも日本語ならスキップ（既存の contains_japanese 判定への
     フォールバック）。これにより REC skip と言語 skip が重複しない。
     """
-    assert is_translation_needed("棺", "HDPT:FULL") is False
+    assert is_translation_needed("棺", "HDPT:FULL", frozenset()) is False
     # REC 型がリスト外でも日本語ならスキップ
-    assert is_translation_needed("既存の日本語", "WEAP:FULL") is False
+    assert is_translation_needed("既存の日本語", "WEAP:FULL", frozenset()) is False
 
 
 def test_T63_rec_empty_backward_compat() -> None:
     """T63: rec="" の場合は REC 型スキップが適用されず、既存の言語判定のみ → True。
 
-    後方互換性: v0.1 の ``is_translation_needed(source)`` と同じ挙動。
+    v0.6 でも ``rec=""`` を渡せば v0.1 互換の挙動（REC 型スキップ無し）になる。
+    ※ ``rec`` は必須引数化されたため ``""`` を明示渡しする。
     """
-    assert is_translation_needed("Hello", rec="") is True
-    # rec 省略も同じ
-    assert is_translation_needed("Hello") is True
+    assert is_translation_needed("Hello", "", frozenset()) is True
 
 
-def test_T63b_default_skip_records_contains_12_entries() -> None:
-    """T63 補足: DEFAULT_SKIP_RECORDS は12件の REC 型を含む。
+def test_T63b_default_skip_records_contains_14_entries(
+    default_skip_records: frozenset[str],
+) -> None:
+    """T63 補足: default_skip_records fixture は v0.6 の 14 件を含む。
 
-    Plan §4 のリストと一致することを検証。
+    v0.6（Plan 006 §6）: ``DEFAULT_SKIP_RECORDS`` 定数（12 件）は削除され、
+    v0.6 デフォルトは 14 件（``FLST:FULL`` / ``KYWD:FULL`` 追加・NG ガイド §9.1 準拠）。
     """
     expected = frozenset({
         "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
         "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
         "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+        "FLST:FULL", "KYWD:FULL",
     })
-    assert DEFAULT_SKIP_RECORDS == expected, (
-        f"DEFAULT_SKIP_RECORDS は12件: 実際 {len(DEFAULT_SKIP_RECORDS)}件"
+    assert default_skip_records == expected, (
+        f"default_skip_records は14件: 実際 {len(default_skip_records)}件"
     )
-    assert len(DEFAULT_SKIP_RECORDS) == 12
+    assert len(default_skip_records) == 14
 
 
 def test_T63c_custom_skip_records_used_when_provided() -> None:
-    """T63 補足: skip_records を明示的に渡した場合は DEFAULT_SKIP_RECORDS は使われない。
+    """T63 補足: skip_records を明示的に渡した場合は toml のデフォルトより優先される。
 
-    ``--no-skip-default-records --skip-records "MGEF:FULL"`` のケースに対応。
+    ``--skip-records "MGEF:FULL"``（完全置換）のケースに対応。
     MGEF:FULL はカスタムリストに入っているが、HDPT:FULL は入っていない。
     """
     custom = frozenset({"MGEF:FULL"})
     # MGEF:FULL はカスタムリストに入っている → スキップ
-    assert is_translation_needed("Hello", "MGEF:FULL", skip_records=custom) is False
-    # HDPT:FULL は DEFAULT_SKIP_RECORDS に入っているが、custom を渡した場合は適用外 → 翻訳対象
-    assert is_translation_needed("Hello", "HDPT:FULL", skip_records=custom) is True
+    assert is_translation_needed("Hello", "MGEF:FULL", custom) is False
+    # HDPT:FULL はカスタムリストに入っていない → 翻訳対象
+    assert is_translation_needed("Hello", "HDPT:FULL", custom) is True
 
 
 # ===========================================================================
@@ -820,17 +823,21 @@ def test_T81c_fingerprint_independent_of_order() -> None:
     assert fp1 == fp2, "順序に依存しない"
 
 
-def test_T81d_default_skip_records_fingerprint_stable() -> None:
-    """T81 補足: DEFAULT_SKIP_RECORDS の fingerprint は安定した固定値。
+def test_T81d_default_skip_records_fingerprint_stable(
+    default_skip_records: frozenset[str],
+) -> None:
+    """T81 補足: default_skip_records の fingerprint は安定した固定値。
 
-    resume 検証で v0.2 のデフォルト動作が一貫していることを保証する回帰テスト。
+    resume 検証で v0.6 のデフォルト動作が一貫していることを保証する回帰テスト。
+    v0.6（Plan 006 §4.5）: ``DEFAULT_SKIP_RECORDS`` 定数は削除され、
+    ``default_skip_records`` fixture（14 件）で検証する。
     """
     import hashlib
 
     expected = hashlib.sha256(
-        "\n".join(sorted(DEFAULT_SKIP_RECORDS)).encode("utf-8")
+        "\n".join(sorted(default_skip_records)).encode("utf-8")
     ).hexdigest()
-    assert compute_skip_records_fingerprint(DEFAULT_SKIP_RECORDS) == expected
+    assert compute_skip_records_fingerprint(default_skip_records) == expected
     # 64文字の hex
     assert len(expected) == 64
 
@@ -1208,3 +1215,38 @@ def test_T145_build_user_message_uses_custom_rec_hints() -> None:
     assert msg_unknown == source, (
         f"未知 REC 型は source そのものを返す: 実際 {msg_unknown!r}"
     )
+
+
+# ===========================================================================
+# v0.6: T165 — is_translation_needed の skip_records 必須化（Plan 006 §4.4 / §9.2）
+#
+# Plan 006 §4.4（Codex review 指摘反映）: 現行 ``skip_records: frozenset[str] | None = None``
+# のデフォルトを削除し、``(source, rec, skip_records)`` 全てを必須引数に変更する
+# （``rec`` も必須化・案 a 採録）。``DEFAULT_SKIP_RECORDS`` 定数完全削除と併せ
+# 「暗黙フォールバック」が完全に消える。
+#
+# ※ 既存 ``is_translation_needed`` は v0.5 段階でも module-level import 済みのため
+#    本テストで local import は不要。関数は存在するが signature が v0.5 ままのため
+#    ``TypeError`` が raise されず red になる（WP-2 完了後に green 化）。
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# T165: is_translation_needed(source, rec) で skip_records 省略時 TypeError
+# ---------------------------------------------------------------------------
+
+def test_T165_is_translation_needed_requires_skip_records() -> None:
+    """T165: ``is_translation_needed(source, rec)`` で ``skip_records`` 省略時 ``TypeError``。
+
+    Plan 006 §4.4: v0.6 で ``is_translation_needed`` は
+    ``(source: str, rec: str, skip_records: frozenset[str]) -> bool`` に
+    signature 変更される（``rec`` / ``skip_records`` 共に必須）。
+    ``skip_records`` を省略して呼ぶと Python の引数欠落と同じ ``TypeError``。
+
+    ※ v0.5 までは ``skip_records: frozenset[str] | None = None`` のデフォルトが
+       あるため ``is_translation_needed("Hello", "WEAP:FULL")`` は正常に動作し
+       ``TypeError`` は raise されない → red。WP-2 完了後に green 化。
+    """
+    # skip_records を省略 → v0.6 では TypeError（必須引数化）
+    with pytest.raises(TypeError):
+        is_translation_needed("Hello", "WEAP:FULL")  # type: ignore[call-arg]

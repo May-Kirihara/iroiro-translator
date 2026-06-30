@@ -8,6 +8,9 @@
 # v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
 #   これらは WP-1 段階では未知キー扱い（WARNING + 無視）で result dict に含まれない。
 #   WP-2 完了後に必須検証が走り result dict に含まれるようになる。
+#
+# v0.6 追加分（Plan 006 §5）: skip_records
+#   v0.6 で [iroiro] skip_records が必須化。本 fixture にも含める。
 
 [iroiro]
 api_base = "http://partial:8080/v1"
@@ -18,6 +21,14 @@ system_prompt = """
 Skyrim MOD の英文を日本語に翻訳する。
 """
 reject_phrases = ["了解", "翻訳します"]
+
+# === v0.6 新規（必須）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
 
 [iroiro.rec_hints]
 "MGEF:FULL" = "魔法の効果名。"

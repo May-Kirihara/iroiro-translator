@@ -62,6 +62,18 @@ from iroiro.progress import ProgressData
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
+# v0.6 デフォルト skip_records（14 件・conftest の ``default_skip_records`` fixture と同値）。
+# v0.6 で ``DEFAULT_SKIP_RECORDS`` 定数が ``iroiro/translator.py`` から完全削除されたため、
+# 既存テストの progress.json fingerprint 計算等で本モジュール定数を使用する
+# （Plan 006 §5・案 α 徹底版）。``iroiro_v05_full.toml`` の ``skip_records`` と一致。
+_V06_DEFAULT_SKIP_RECORDS: frozenset[str] = frozenset({
+    "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+    "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+    "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+    "FLST:FULL", "KYWD:FULL",
+})
+
+
 # ===========================================================================
 # v0.5: iroiro.toml 必須化対応（Plan 005 §2.2）
 #
@@ -169,14 +181,15 @@ def _run_translate(
     max_chars: int = 4000,
     timeout: int = 30,
     concurrency: int = 1,
-    no_skip_default_records: bool = False,
-    skip_records_text: str = "",
+    skip_records_text: str | None = None,
 ) -> object:
     """`iroiro translate` を実行して CliRunner.invoke の結果を返す。
 
-    v0.2 フラグ:
-      - ``no_skip_default_records``: ``--no-skip-default-records``
-      - ``skip_records_text``: ``--skip-records TEXT``（カンマ区切り）
+    v0.6（Plan 006 §4.2 / §4.3）のフラグセマンティクス:
+      - ``skip_records_text``: ``--skip-records`` フラグ
+        - ``None``（省略）: ``--skip-records`` を渡さない（toml の ``skip_records`` を使用）
+        - ``""``（空文字）: ``--skip-records ""`` を渡す（明示的空 set = 全件翻訳）
+        - 非空文字列: ``--skip-records <value>`` を渡す（toml を完全置換）
     """
     app = _get_app()
     runner = CliRunner()
@@ -192,9 +205,7 @@ def _run_translate(
     args += ["--max-chars", str(max_chars)]
     args += ["--timeout", str(timeout)]
     args += ["--concurrency", str(concurrency)]
-    if no_skip_default_records:
-        args.append("--no-skip-default-records")
-    if skip_records_text:
+    if skip_records_text is not None:
         args += ["--skip-records", skip_records_text]
     return runner.invoke(app, args)
 
@@ -288,7 +299,6 @@ def test_T38_resume_reads_progress(
     import shutil
 
     from iroiro.progress import compute_input_hash, compute_skip_records_fingerprint
-    from iroiro.translator import DEFAULT_SKIP_RECORDS
     from iroiro.xml_io import parse_xml
 
     # tiny.xml を tmp_path にコピー（fixtures を汚さないため）
@@ -296,9 +306,9 @@ def test_T38_resume_reads_progress(
     shutil.copy(tiny_xml, tmp_input)
 
     # 事前に progress.json を作成（<input>.iroiro-progress.json）
-    # v0.2 形式: skip_records_fingerprint を含める（デフォルト動作と一致させる）
+    # v0.6 形式: skip_records_fingerprint を含める（デフォルト動作と一致させる）
     input_hash = compute_input_hash(tmp_input)
-    fp_default = compute_skip_records_fingerprint(DEFAULT_SKIP_RECORDS)
+    fp_default = compute_skip_records_fingerprint(_V06_DEFAULT_SKIP_RECORDS)
     progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
     preexisting_translation = "【既存訳文】entry0"
     progress_path.write_text(
@@ -454,10 +464,12 @@ def test_T64_no_skip_default_records_translates_hdpt(
     patch_translator,
     v05_default_config,
 ) -> None:
-    """T64: --no-skip-default-records 指定で HDPT:FULL が翻訳対象になる。
+    """T64: ``--skip-records ""`` 指定で HDPT:FULL が翻訳対象になる。
 
-    デフォルト動作では HDPT:FULL は REC skip されるが、
-    --no-skip-default-records でデフォルトリストを無効化すると翻訳される。
+    v0.6（Plan 006 §4.2）: ``--no-skip-default-records`` は廃止され、代わりに
+    ``--skip-records ""``（明示的空 set = 全件翻訳）で全 REC 型を翻訳対象にする。
+    デフォルト動作では HDPT:FULL は REC skip されるが、``--skip-records ""`` で
+    空 set に完全置換すると翻訳される。
     """
     translated_sources: list[str] = []
     translated_recs: list[str] = []
@@ -471,13 +483,13 @@ def test_T64_no_skip_default_records_translates_hdpt(
 
     output = tmp_path / "out_t64.xml"
     result = _run_translate(
-        skip_records_xml, output=output, no_skip_default_records=True
+        skip_records_xml, output=output, skip_records_text=""
     )
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
     # HDPT:FULL "Male Head" が翻訳対象になっている（MockTranslator に渡された）
     assert "Male Head" in translated_sources, (
-        "HDPT:FULL が --no-skip-default-records で翻訳対象になった"
+        "HDPT:FULL が --skip-records '' で翻訳対象になった"
     )
     assert "HDPT:FULL" in translated_recs
 
@@ -488,10 +500,13 @@ def test_T65_skip_records_adds_acti_full(
     patch_translator,
     v05_default_config,
 ) -> None:
-    """T65: --skip-records "ACTI:FULL" 指定で ACTI:FULL が追加スキップされる。
+    """T65: ``--skip-records "ACTI:FULL"`` 指定で ACTI:FULL がスキップされる。
 
-    デフォルトでは ACTI:FULL "Wooden Door" は翻訳対象だが、--skip-records で
-    追加スキップを指定すると翻訳されなくなる。
+    v0.6（Plan 006 §4.3）: ``--skip-records`` は toml の ``skip_records`` を
+    **完全置換** する（v0.5 までの「追加」セマンティクスから変更）。
+    ``--skip-records "ACTI:FULL"`` は ``skip_records = {ACTI:FULL}`` となり、
+    ACTI:FULL "Wooden Door" はスキップされる。WEAP:FULL は置換後の set に無いため
+    翻訳対象のまま。
     """
     translated_sources: list[str] = []
 
@@ -507,11 +522,11 @@ def test_T65_skip_records_adds_acti_full(
     )
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
-    # ACTI:FULL "Wooden Door" は --skip-records で追加スキップされた
+    # ACTI:FULL "Wooden Door" は --skip-records でスキップされた（完全置換で {ACTI:FULL}）
     assert "Wooden Door" not in translated_sources, (
-        "ACTI:FULL が --skip-records で追加スキップされた"
+        "ACTI:FULL が --skip-records でスキップされた"
     )
-    # WEAP:FULL "Iron Sword" はデフォルトリスト外 + --skip-records 対象外 → 翻訳される
+    # WEAP:FULL "Iron Sword" は置換後の set に対象外 → 翻訳される
     assert "Iron Sword" in translated_sources, (
         "WEAP:FULL は引き続き翻訳対象"
     )
@@ -523,10 +538,10 @@ def test_T66_no_skip_default_plus_skip_records_mgef(
     patch_translator,
     v05_default_config,
 ) -> None:
-    """T66: --no-skip-default-records + --skip-records "MGEF:FULL" の複合ケース。
+    """T66: ``--skip-records "MGEF:FULL"`` の完全置換ケース。
 
-    Plan §5.2: --no-skip-default-records が「デフォルトを無効化」した上で
-    --skip-records を適用する。
+    v0.6（Plan 006 §4.3）: ``--skip-records "MGEF:FULL"`` は toml の ``skip_records``
+    を ``{MGEF:FULL}`` で **完全置換** する。
     このケースでは MGEF:FULL だけがスキップされ、HDPT/WEAP 等は翻訳される。
     （ユースケース: 魔法名をスキップしたいが他は翻訳したい）
     """
@@ -544,20 +559,19 @@ def test_T66_no_skip_default_plus_skip_records_mgef(
     result = _run_translate(
         skip_records_xml,
         output=output,
-        no_skip_default_records=True,
         skip_records_text="MGEF:FULL",
     )
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
-    # MGEF:FULL "Fire Damage" はスキップ（--skip-records で指定）
+    # MGEF:FULL "Fire Damage" はスキップ（--skip-records で指定・完全置換）
     assert "Fire Damage" not in translated_sources, (
         "MGEF:FULL は --skip-records でスキップされた"
     )
     assert "MGEF:FULL" not in translated_recs
 
-    # HDPT:FULL "Male Head" は翻訳される（デフォルトリストが無効化されているため）
+    # HDPT:FULL "Male Head" は翻訳される（置換後の set {MGEF:FULL} に含まれない）
     assert "Male Head" in translated_sources, (
-        "HDPT:FULL は --no-skip-default-records で翻訳対象になった"
+        "HDPT:FULL は --skip-records の完全置換で翻訳対象になった"
     )
     assert "HDPT:FULL" in translated_recs
 
@@ -722,16 +736,15 @@ def test_T82_cli_resume_fingerprint_mismatch_exit_code_2(
     import shutil
 
     from iroiro.progress import compute_input_hash, compute_skip_records_fingerprint
-    from iroiro.translator import DEFAULT_SKIP_RECORDS
 
     # skip_records.xml を tmp_path にコピー（fixtures を汚さないため）
     tmp_input = tmp_path / "skip_records.xml"
     shutil.copy(skip_records_xml, tmp_input)
 
-    # progress.json を作成: DEFAULT_SKIP_RECORDS の fingerprint を保存
+    # progress.json を作成: v0.6 デフォルト 14 件の fingerprint を保存
     input_hash = compute_input_hash(tmp_input)
     progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
-    fp_default = compute_skip_records_fingerprint(DEFAULT_SKIP_RECORDS)
+    fp_default = compute_skip_records_fingerprint(_V06_DEFAULT_SKIP_RECORDS)
     progress_path.write_text(
         json.dumps(
             {
@@ -750,14 +763,14 @@ def test_T82_cli_resume_fingerprint_mismatch_exit_code_2(
 
     patch_translator(handler=lambda src, rec: f"【訳】{src}")
 
-    # --no-skip-default-records で異なる skip_records を指定して --resume
-    # → fingerprint が一致しない → exit code 2
+    # --skip-records "" で異なる skip_records（空 set）を指定して --resume
+    # → fingerprint が "" になり不一致 → exit code 2
     output = tmp_path / "out_t82.xml"
     result = _run_translate(
         tmp_input,
         output=output,
         resume=True,
-        no_skip_default_records=True,  # fingerprint が "" になり不一致
+        skip_records_text="",  # 空 set → fingerprint "" になり不一致
     )
 
     assert result.exit_code == 2, (
@@ -1297,13 +1310,14 @@ def test_T117_apply_existing_untouched_stays_pending() -> None:
 #   ＞ iroiro.toml ``retry_failed`` ＞ 内蔵デフォルト False
 #
 # 検証戦略:
-#   - tiny.xml の entry[1]（BOOK:FULL "Line one<br>Line two"）は DEFAULT_SKIP_RECORDS
-#     外かつ英語・非空・max_chars 以下のため **翻訳対象**。この index を progress.json
-#     の failed に事前登録し、retry_failed の有無で MockTranslator に渡るかを検証する。
+#   - tiny.xml の entry[1]（BOOK:FULL "Line one<br>Line two"）は v0.6 デフォルトの
+#     skip_records（14 件）外かつ英語・非空・max_chars 以下のため **翻訳対象**。
+#     この index を progress.json の failed に事前登録し、retry_failed の有無で
+#     MockTranslator に渡るかを検証する。
 #   - progress.json は <input>.iroiro-progress.json に作られるため、tiny.xml を
 #     tmp_path にコピーして fixtures ディレクトリを汚さない（T38/T82 と同じパターン）。
-#   - skip_records_fingerprint は DEFAULT_SKIP_RECORDS と一致させ、T77/T82 の
-#     fingerprint mismatch 経路に入らないようにする。
+#   - skip_records_fingerprint は v0.6 デフォルト（``_V06_DEFAULT_SKIP_RECORDS``）と
+#     一致させ、T77/T82 の fingerprint mismatch 経路に入らないようにする。
 # ===========================================================================
 
 
@@ -1315,18 +1329,18 @@ def _seed_progress_with_failed(
     """progress.json に failed リストを事前登録する（v0.4 T123-T127 用 helper）。
 
     指定 index が failed として記録された状態を模擬。``input_hash`` は実ファイル
-    から計算し、``skip_records_fingerprint`` は ``DEFAULT_SKIP_RECORDS``（デフォルト
-    動作）と一致させることで fingerprint mismatch を回避する（T77/T82 のエラー
-    経路に入らないようにする）。
+    から計算し、``skip_records_fingerprint`` は v0.6 デフォルト 14 件
+    （``_V06_DEFAULT_SKIP_RECORDS``・``v05_default_config`` fixture が配置する
+    ``iroiro_v05_full.toml`` と一致）と一致させることで fingerprint mismatch を
+    回避する（T77/T82 のエラー経路に入らないようにする）。
 
     Returns:
         作成した progress.json のパス（``<input>.iroiro-progress.json``）。
     """
     from iroiro.progress import compute_input_hash, compute_skip_records_fingerprint
-    from iroiro.translator import DEFAULT_SKIP_RECORDS
 
     input_hash = compute_input_hash(input_xml)
-    fp_default = compute_skip_records_fingerprint(DEFAULT_SKIP_RECORDS)
+    fp_default = compute_skip_records_fingerprint(_V06_DEFAULT_SKIP_RECORDS)
     progress_path = tmp_path / (input_xml.name + ".iroiro-progress.json")
     progress_path.write_text(
         json.dumps(
@@ -2058,3 +2072,406 @@ def test_T154_cli_constructs_translator_with_prompt_config(
     assert hasattr(prompts, "rec_hints")
     # rec_hints は v0.5 フル設定の 18 種
     assert "MGEF:FULL" in prompts.rec_hints
+
+
+# ===========================================================================
+# v0.6: T166a-T166d, T167 — skip_records の toml 化と CLI --skip-records の
+# 完全置換セマンティクス（Plan 006 §4.2 / §4.3 / §9.2）
+#
+# Plan 006 §4.3: ``--skip-records`` を ``str | None = None`` パターンで完全置換化
+# （v0.5 の ``retry_failed: bool | None = None`` と同パターン・Codex review 採用案）。
+#
+#   --skip-records 指定       Typer が渡す値    意味
+#   省略                       None              toml の skip_records を使用
+#   --skip-records ""          ""                明示的に空 set（全件翻訳）
+#   --skip-records "..."       非空文字列         toml を完全置換
+#
+# Plan 006 §4.2: ``--no-skip-default-records`` は廃止（案 α で DEFAULT が
+# 無くなるため意味を成さない）。未知オプションとして Typer が弾く。
+#
+# 検証戦略: ``--dry-run`` で ``skip_records.xml`` を処理し、REC skip 件数で
+# skip_records 構築後の挙動を観察する。skip_records.xml（8 エントリ）の内訳:
+#   - HDPT:FULL "Male Head"      (REC skip if HDPT:FULL in set)
+#   - WEAP:FULL "Iron Sword"     (translate unless WEAP:FULL in set)
+#   - MGEF:FULL "Fire Damage"    (REC skip if MGEF:FULL in set)
+#   - RACE:FULL "Nord"           (REC skip if RACE:FULL in set)
+#   - BPTD:BPTN "Head"           (REC skip if BPTD:BPTN in set)
+#   - ACTI:FULL "Wooden Door"    (translate unless ACTI:FULL in set)
+#   - ACTI:FULL ""               (language skip・empty)
+#   - WEAP:FULL "既存の日本語"   (language skip・Japanese)
+#
+# ※ ``iroiro_v06_custom_skip.toml`` は ``skip_records = ["HDPT:FULL"]``（1 件のみ・
+#    v0.6 デフォルト 14 件と明確に異なる）を含む。T166a-T166d で「toml の skip_records
+#    が使われる」「CLI が toml を完全置換する」を明確に観察可能にするため。
+#
+# ※ WP-1 段階では CLI は v0.5 挙動（``--no-skip-default-records`` 存在・``--skip-records``
+#    追加セマンティクス）のままのため、本セクションのテストは全て red。
+#    WP-2 完了後に green 化。
+# ===========================================================================
+
+
+def _extract_dry_run_count(out: str, label_substr: str) -> int | None:
+    """dry-run 出力から指定ラベルに続く数値を抽出するヘルパー（T69 パターン）。
+
+    例: ``"スキップ（REC 型）: 4"`` → 4
+    """
+    import re
+
+    pattern = re.compile(
+        re.escape(label_substr) + r"\D*(\d+)", re.MULTILINE
+    )
+    m = pattern.search(out)
+    return int(m.group(1)) if m else None
+
+
+# ---------------------------------------------------------------------------
+# T166a: --skip-records 省略時 toml の skip_records を使用
+# ---------------------------------------------------------------------------
+
+def test_T166a_skip_records_omitted_uses_toml(
+    skip_records_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T166a: ``--skip-records`` 省略時・toml の ``skip_records`` を使用する。
+
+    Plan 006 §4.3: ``--skip-records`` 省略（Typer が ``None`` を渡す）の場合、
+    CLI は toml の ``skip_records`` を使用する（v0.5 の ``retry_failed`` と同様）。
+
+    ``iroiro_v06_custom_skip.toml`` は ``skip_records = ["HDPT:FULL"]``（1 件のみ）
+    を含む。``--skip-records`` 省略で dry-run すると、REC skip は 1 件（HDPT のみ）
+    になるはず。
+
+    ※ WP-1 段階では CLI は v0.5 挙動（``skip_records = DEFAULT_SKIP_RECORDS``・12 件）
+       のため、REC skip = 4 件（HDPT/MGEF/RACE/BPTD）になり red。WP-2 完了後に green。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+    shutil.copy(FIXTURES_DIR / "iroiro_v06_custom_skip.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = _run_translate_with_config(
+        tmp_input,
+        extra_args=["--dry-run"],
+    )
+
+    assert result.exit_code == 0, (
+        f"dry-run が正常終了: 実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+    # toml の skip_records = ["HDPT:FULL"]（1 件のみ）が使われる
+    # → HDPT:FULL は REC skip・MGEF/RACE/BPTD は翻訳対象
+    skipped_rec = _extract_dry_run_count(result.output, "スキップ（REC 型）")
+    assert skipped_rec == 1, (
+        f"REC skip は 1 件（HDPT:FULL のみ・toml の skip_records 使用）: "
+        f"実際 {skipped_rec!r}\noutput: {result.output!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T166b: --skip-records "" で明示的空 set（全件翻訳）
+# ---------------------------------------------------------------------------
+
+def test_T166b_skip_records_empty_string_means_empty_set(
+    skip_records_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T166b: ``--skip-records ""`` で明示的空 set（全件翻訳）になる。
+
+    Plan 006 §4.3 / §4.2: ``--skip-records ""``（空文字列）は ``_parse_skip_records("")``
+    → 空 set を意味する。toml の ``skip_records`` を完全置換し、全 REC 型が翻訳対象
+    になる（``--no-skip-default-records`` 廃止後の「全件翻訳」CLI 手段・§4.2）。
+
+    ※ WP-1 段階では ``skip_records = DEFAULT_SKIP_RECORDS | _parse_skip_records("")``
+       = DEFAULT_SKIP_RECORDS（12 件）のため REC skip = 4 件になり red。
+       WP-2 完了後に green。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+    shutil.copy(FIXTURES_DIR / "iroiro_v06_custom_skip.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = _run_translate_with_config(
+        tmp_input,
+        extra_args=["--skip-records", "", "--dry-run"],
+    )
+
+    assert result.exit_code == 0, (
+        f"dry-run が正常終了: 実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+    # 明示的空 set → REC skip は 0 件（全 REC 型が翻訳対象）
+    skipped_rec = _extract_dry_run_count(result.output, "スキップ（REC 型）")
+    assert skipped_rec == 0, (
+        f"REC skip は 0 件（--skip-records '' で明示的空 set = 全件翻訳）: "
+        f"実際 {skipped_rec!r}\noutput: {result.output!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T166c: --skip-records "..." で完全置換（toml を無視）
+# ---------------------------------------------------------------------------
+
+def test_T166c_skip_records_replaces_toml(
+    skip_records_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T166c: ``--skip-records "MGEF:FULL"`` で toml の ``skip_records`` を完全置換する。
+
+    Plan 006 §4.3: ``--skip-records`` に非空文字列を指定した場合、``_parse_skip_records``
+    の結果で toml を **完全置換** する（v0.5 までの「DEFAULT への追加」セマンティクス
+    から変更）。
+
+    ``iroiro_v06_custom_skip.toml`` は ``skip_records = ["HDPT:FULL"]`` を含むが、
+    ``--skip-records "MGEF:FULL"`` で **完全置換** されるため:
+      - HDPT:FULL "Male Head" → 翻訳対象（toml の HDPT は無視される）
+      - MGEF:FULL "Fire Damage" → REC skip（CLI で指定）
+
+    ※ WP-1 段階では ``skip_records = DEFAULT_SKIP_RECORDS | {MGEF:FULL}`` = DEFAULT
+       （MGEF:FULL は元々 DEFAULT に含まれる）のため REC skip = 4 件（HDPT/MGEF/RACE/BPTD）
+       になり red。WP-2 完了後に green。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+    shutil.copy(FIXTURES_DIR / "iroiro_v06_custom_skip.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = _run_translate_with_config(
+        tmp_input,
+        extra_args=["--skip-records", "MGEF:FULL", "--dry-run"],
+    )
+
+    assert result.exit_code == 0, (
+        f"dry-run が正常終了: 実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+    # CLI の "MGEF:FULL" が toml の "HDPT:FULL" を完全置換
+    # → MGEF:FULL のみ REC skip（1 件）・HDPT/RACE/BPTD は翻訳対象
+    skipped_rec = _extract_dry_run_count(result.output, "スキップ（REC 型）")
+    assert skipped_rec == 1, (
+        f"REC skip は 1 件（MGEF:FULL のみ・CLI が toml を完全置換）: "
+        f"実際 {skipped_rec!r}\noutput: {result.output!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T166d: --skip-records "hdpt:full" の CLI 側正規化 + 完全置換の組み合わせ
+# ---------------------------------------------------------------------------
+
+def test_T166d_skip_records_lowercase_normalization_and_replacement(
+    skip_records_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T166d: ``--skip-records "mgef:full"``（小文字）の CLI 側正規化 + 完全置換。
+
+    Plan 006 §4.3 / §9.2 T166d（Codex review 指摘）: CLI の ``--skip-records``
+    は ``_parse_skip_records`` 経由で ``strip().upper()`` 正規化を行う。
+    小文字 ``"mgef:full"`` は ``"MGEF:FULL"`` に正規化された上で toml を完全置換する。
+
+    ``iroiro_v06_custom_skip.toml`` は ``skip_records = ["HDPT:FULL"]`` を含むが、
+    ``--skip-records "mgef:full"`` で完全置換されるため:
+      - HDPT:FULL "Male Head" → 翻訳対象（toml の HDPT は無視）
+      - MGEF:FULL "Fire Damage" → REC skip（CLI の mgef:full → MGEF:FULL 正規化）
+
+    ※ WP-1 段階では ``skip_records = DEFAULT_SKIP_RECORDS | {MGEF:FULL}`` = DEFAULT
+       のため REC skip = 4 件（HDPT/MGEF/RACE/BPTD）になり red。WP-2 完了後に green。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+    shutil.copy(FIXTURES_DIR / "iroiro_v06_custom_skip.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = _run_translate_with_config(
+        tmp_input,
+        extra_args=["--skip-records", "mgef:full", "--dry-run"],
+    )
+
+    assert result.exit_code == 0, (
+        f"dry-run が正常終了: 実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+    # CLI の "mgef:full" が "MGEF:FULL" に正規化 + toml を完全置換
+    # → MGEF:FULL のみ REC skip（1 件）・HDPT/RACE/BPTD は翻訳対象
+    skipped_rec = _extract_dry_run_count(result.output, "スキップ（REC 型）")
+    assert skipped_rec == 1, (
+        f"REC skip は 1 件（mgef:full → MGEF:FULL 正規化 + 完全置換）: "
+        f"実際 {skipped_rec!r}\noutput: {result.output!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T167: --no-skip-default-records が未知オプションとして SystemExit（廃止確認）
+# ---------------------------------------------------------------------------
+
+def test_T167_no_skip_default_records_is_unknown_option(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T167: ``--no-skip-default-records`` が未知オプションとして弾かれる（廃止確認）。
+
+    Plan 006 §4.2: 案 α で ``DEFAULT_SKIP_RECORDS`` 定数が完全削除されるため、
+    ``--no-skip-default-records`` は意味を成さず **廃止** される。v0.6 では
+    このフラグを渡すと Typer が未知オプションとして弜き、非ゼロ exit code になる。
+
+    代替手段（§4.2）: ユーザーが「全件翻訳」したい場合は ``--skip-records ""``
+    を使う（T166b）。
+
+    ※ WP-1 段階では ``--no-skip-default-records`` は v0.5 までの正規オプションとして
+       存在するため、Typer は受理し exit code = 0 になる → red。WP-2 完了後に green。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    shutil.copy(FIXTURES_DIR / "iroiro_v05_full.toml", tmp_path / "iroiro.toml")
+    monkeypatch.chdir(tmp_path)
+
+    result = _run_translate_with_config(
+        tmp_input,
+        extra_args=["--no-skip-default-records", "--dry-run"],
+    )
+
+    # v0.6 では --no-skip-default-records は廃止・未知オプション → 非ゼロ exit code
+    assert result.exit_code != 0, (
+        f"--no-skip-default-records は未知オプションとして弾かれる（exit != 0）: "
+        f"実際 exit_code={result.exit_code}\noutput: {result.output}"
+    )
+
+
+# ===========================================================================
+# v0.6: T168 — iroiro.toml.example が skip_records(14件) + 拡充 rec_hints を含む
+#
+# Plan 006 §9.2 T168 / §11.1: ``iroiro.toml.example`` 更新は WP-3 管轄のため、
+# テスト本体も WP-3 で追加する（Codex review 指摘で WP-1 から移動）。
+#
+# T155 は v0.5 由来（example が ``load_config`` 全体で通ることの検証）だが、
+# T168 は v0.6 新規（example が 14 件の ``skip_records`` と拡充された
+# ``[iroiro.rec_hints]``（§7.1）を含むことの検証）。
+# ===========================================================================
+
+def test_T168_example_contains_v06_skip_records_and_rec_hints(
+    tmp_path: Path,
+) -> None:
+    """T168: ``iroiro.toml.example`` が v0.6 の ``skip_records``(14件) と拡充 ``rec_hints`` を含む。
+
+    Plan 006 §9.2 T168 / §11.1: WP-3（docs / example 更新）で ``iroiro.toml.example``
+    に以下を記載したことを検証する:
+
+    1. ``tomllib`` で parse 可能（T155 と重複するが回帰防止）
+    2. ``[iroiro] skip_records`` が ``list`` で **14 件**（NG ガイド §9.1
+       Conservative Preset・EDID 抜き）
+    3. ``[iroiro.rec_hints]`` が ``dict`` で §7.1 の主要レコード
+       （``INFO:NAM1`` / ``AMMO:FULL`` / ``WRLD:FULL`` 等・Fallout4 / Starfield
+       で出現する 3 ゲーム共通レコード）を含む
+    4. ``load_config`` を通して ``skip_records`` が ``frozenset[str]`` で 14 件になること
+
+    ※ 本テストは example が ``cp`` で ``iroiro.toml`` に複製された直後の状態
+       （v0.6 デフォルト）を検証する。既存ユーザーが ``skip_records`` を追記せず
+       v0.6 にアップグレードすると ``IroiroError`` で停止するため、example が
+       常に正しいデフォルトを含むことを保証する回帰テスト。
+    """
+    import tomllib
+
+    from iroiro.config import load_config
+
+    # リポジトリルートの iroiro.toml.example を特定
+    example_path = Path(__file__).resolve().parents[1] / "iroiro.toml.example"
+    assert example_path.is_file(), f"iroiro.toml.example が存在する: {example_path}"
+
+    # 1. tomllib で parse できる
+    with example_path.open("rb") as f:
+        data = tomllib.load(f)
+
+    iroiro_section = data.get("iroiro", {})
+
+    # 2. skip_records が list で 14 件（v0.6 デフォルト・EDID 抜き Conservative Preset）
+    skip_records = iroiro_section.get("skip_records")
+    assert isinstance(skip_records, list), (
+        f"skip_records は list 型: 実際 {type(skip_records).__name__}"
+    )
+    assert len(skip_records) == 14, (
+        f"skip_records は 14 件（v0.6 デフォルト）: 実際 {len(skip_records)} 件"
+    )
+
+    # 必須レコード（v0.2 から継続の 12 件 + v0.6 新規 FLST/KYWD）
+    expected_records = {
+        "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+        "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+        "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+        "FLST:FULL", "KYWD:FULL",
+    }
+    actual_records = set(skip_records)
+    assert actual_records == expected_records, (
+        f"skip_records は v0.6 の 14 件と一致: "
+        f"不足 {expected_records - actual_records} / "
+        f"余分 {actual_records - expected_records}"
+    )
+
+    # 3. rec_hints が dict で §7.1 の主要レコードを含む
+    rec_hints = iroiro_section.get("rec_hints")
+    assert isinstance(rec_hints, dict), (
+        f"rec_hints は dict 型: 実際 {type(rec_hints).__name__}"
+    )
+    # §7.1 の主要レコード（Fallout4 / Starfield で出現する 3 ゲーム共通レコード中心）
+    required_hints = {
+        "INFO:NAM1",  # §4.7: INFO:RNAM から置換（NPC 会話本文）
+        "INFO:NAM2",
+        "DIAL:FULL",
+        "QUST:FULL", "QUST:CNAM", "QUST:NNAM",
+        "MESG:FULL", "MESG:DESC",
+        "BOOK:FULL", "BOOK:DESC",
+        "NPC_:FULL",
+        "WEAP:FULL", "WEAP:DESC",
+        "ARMO:FULL", "ARMO:DESC",
+        "AMMO:FULL",   # Fallout4 / Starfield で出現
+        "ALCH:FULL",
+        "MISC:FULL",   # Fallout4 / Starfield で出現
+        "SPEL:FULL", "SPEL:DESC",
+        "PERK:FULL", "PERK:DESC",
+        "AVIF:FULL",
+        "CELL:FULL", "LCTN:FULL",
+        "WRLD:FULL",   # Fallout4 / Starfield で出現
+        "MGEF:DESC",
+        "ENCH:FULL", "ACTI:FULL", "INGR:FULL",
+    }
+    missing_hints = required_hints - set(rec_hints.keys())
+    assert not missing_hints, (
+        f"rec_hints に §7.1 の主要レコードが含まれる: 不足 {sorted(missing_hints)}"
+    )
+
+    # §7.2: skip リストと重複するレコードは rec_hints に含まれない（重複ゼロ方針）
+    skip_rec_keys_in_hints = actual_records & set(rec_hints.keys())
+    assert not skip_rec_keys_in_hints, (
+        f"skip リストと rec_hints の重複はゼロ（§7.3）: "
+        f"重複 {sorted(skip_rec_keys_in_hints)}"
+    )
+    # §4.7: INFO:RNAM は INFO:NAM1 に置換済み（rec_hints に残らない）
+    assert "INFO:RNAM" not in rec_hints, (
+        "INFO:RNAM は INFO:NAM1 に置換済み（§4.7）・rec_hints に残らない"
+    )
+
+    # 4. load_config を通して skip_records が frozenset[str] で 14 件になること
+    tmp_config = tmp_path / "from_example_t168.toml"
+    import shutil as _shutil2
+    _shutil2.copy(example_path, tmp_config)
+    result = load_config(tmp_config)
+    loaded_skip = result.get("skip_records")
+    assert isinstance(loaded_skip, frozenset), (
+        f"load_config の skip_records は frozenset: 実際 {type(loaded_skip).__name__}"
+    )
+    assert len(loaded_skip) == 14, (
+        f"load_config の skip_records は 14 件（重複除去後）: "
+        f"実際 {len(loaded_skip)} 件"
+    )

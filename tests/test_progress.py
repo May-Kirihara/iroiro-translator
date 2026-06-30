@@ -503,16 +503,20 @@ def test_T79_v01_progress_with_empty_fingerprint_resumes_with_empty_set(
     assert data.entries == {0: "訳文0"}
 
 
-def test_T80_v01_progress_with_default_skip_records_raises(tmp_path: Path) -> None:
-    """T80: v0.1 形式 progress.json（fingerprint=""）+ DEFAULT_SKIP_RECORDS → ValueError.
+def test_T80_v01_progress_with_default_skip_records_raises(
+    tmp_path: Path,
+    default_skip_records: frozenset[str],
+) -> None:
+    """T80: v0.1 形式 progress.json（fingerprint=""）+ 非空 skip_records → ValueError.
 
-    v0.1 で作成された progress.json（fingerprint=""）に対して v0.2 のデフォルト動作
-    （DEFAULT_SKIP_RECORDS = 非空 fingerprint）で resume しようとすると、
+    v0.1 で作成された progress.json（fingerprint=""）に対して v0.6 のデフォルト動作
+    （``default_skip_records`` = 非空 fingerprint）で resume しようとすると、
     fingerprint 不一致で ValueError になる（安全側に倒す）。
     ユーザーは progress.json を削除する必要がある。
-    """
-    from iroiro.translator import DEFAULT_SKIP_RECORDS
 
+    v0.6（Plan 006 §4.5）: ``DEFAULT_SKIP_RECORDS`` 定数は削除され、テストは
+    ``default_skip_records`` fixture（14 件）を使用する。
+    """
     progress_path = tmp_path / "input.iroiro-progress.json"
     # v0.1 形式: skip_records_fingerprint フィールド無し（= "" 扱い）
     progress_path.write_text(
@@ -530,9 +534,9 @@ def test_T80_v01_progress_with_default_skip_records_raises(tmp_path: Path) -> No
         )
     )
 
-    # 現在はデフォルト動作（DEFAULT_SKIP_RECORDS）
-    fp_default = compute_skip_records_fingerprint(DEFAULT_SKIP_RECORDS)
-    assert fp_default != "", "前提: DEFAULT_SKIP_RECORDS の fingerprint は非空"
+    # 現在はデフォルト動作（default_skip_records = 14 件の非空 set）
+    fp_default = compute_skip_records_fingerprint(default_skip_records)
+    assert fp_default != "", "前提: default_skip_records の fingerprint は非空"
 
     writer = ProgressWriter(
         progress_path=progress_path,
@@ -932,3 +936,73 @@ async def test_T130_mark_done_clears_all_duplicate_failed(tmp_path: Path) -> Non
     )
     # 既存の entries[0] は保持される（T84 と同じ critical 回帰の保護）
     assert raw["entries"]["0"] == "訳文0"
+
+
+# ===========================================================================
+# v0.6: T169 — progress.json resume 時の fingerprint 検証（14 件）
+#
+# Plan 006 §9.2 T169 / §4.5: v0.6 で skip リストが 12 件 → 14 件に拡充される。
+# progress.json の skip_records_fingerprint は ``compute_skip_records_fingerprint``
+# で計算され、要素数に依存せず ``SHA256("\\n".join(sorted(elements)))`` で算出される
+# （Plan 006 §4.5・空集合は ``""`` 特例・v0.1 形式 progress.json との互換性のため）。
+#
+# 本テストは「14 件の skip_records でも fingerprint 計算が機能する」ことを検証する
+# （T78 と同パターン・要素数を 14 にしただけ）。既存コードで green になるはず。
+# ===========================================================================
+
+
+def test_T169_skip_records_fingerprint_14_entries_match_succeeds(
+    tmp_path: Path,
+) -> None:
+    """T169: 14 件の skip_records でも fingerprint 計算が機能する（v0.6 の新デフォルト）。
+
+    Plan 006 §9.2 T169 / §4.5: v0.6 で skip リストが 14 件に拡充される。
+    ``compute_skip_records_fingerprint`` は ``set`` の ``sorted`` ``join`` で計算
+    されるため、要素数に依存しない。14 件でも 12 件でも同じロジックで動くことを
+    検証する（既存 T78 と同パターン・14 件版）。
+
+    ※本テストは WP-1 段階でも既存コードで green になるはず（fingerprint 計算は
+       要素数に依存しないため・Plan 006 §9.2 T169 に明記）。
+    """
+    # v0.6 デフォルト skip_records（14 件）
+    skip_records_14 = frozenset({
+        "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+        "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+        "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+        "FLST:FULL", "KYWD:FULL",
+    })
+    assert len(skip_records_14) == 14, "前提: 14 件"
+
+    fp = compute_skip_records_fingerprint(skip_records_14)
+    # 14 件でも空集合特例（""）にはならない（非空 set のため）
+    assert fp != "", "前提: 非空 set の fingerprint は非空"
+
+    progress_path = tmp_path / "input.iroiro-progress.json"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "input_path": str(tmp_path / "input.xml"),
+                "input_hash": "same_hash",
+                "api_base": "http://localhost:8081/v1",
+                "model": "test-model",
+                "skip_records_fingerprint": fp,
+                "entries": {0: "訳文0", 1: "訳文1"},
+                "failed": [],
+            },
+            ensure_ascii=False,
+        )
+    )
+
+    # 同じ 14 件の fingerprint で writer を作成 → resume 成功
+    writer = ProgressWriter(
+        progress_path=progress_path,
+        input_path=tmp_path / "input.xml",
+        input_hash="same_hash",
+        api_base="http://localhost:8081/v1",
+        model="test-model",
+        skip_records_fingerprint=fp,  # 同じ fingerprint
+    )
+
+    data = writer.load_existing()
+    assert data is not None, "14 件の fingerprint 一致で resume 成功"
+    assert data.entries == {0: "訳文0", 1: "訳文1"}

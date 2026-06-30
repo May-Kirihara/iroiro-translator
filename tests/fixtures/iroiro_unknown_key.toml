@@ -7,6 +7,10 @@
 #   これらも WP-1 段階では未知キー扱い（WARNING + 無視）。WP-2 完了後に必須検証が走る。
 #   T98 は「未知キー（unknown_key / another_unknown）への WARNING」を検証するのが主眼で
 #   あるため、3 新項目の有無はテスト結果に影響しない。
+#
+# v0.6 追加分（Plan 006 §5）: skip_records
+#   本 fixture でも unknown_key / another_unknown と同様に「未知キー扱い」されるが、
+#   T98 は skip_records について検証しないため影響しない。
 
 [iroiro]
 api_base       = "http://known:8080/v1"
@@ -18,6 +22,14 @@ system_prompt = """
 Skyrim MOD の英文を日本語に翻訳する。
 """
 reject_phrases = ["了解", "翻訳します"]
+
+# === v0.6 新規（必須）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
 
 [iroiro.rec_hints]
 "MGEF:FULL" = "魔法の効果名。"

@@ -1,0 +1,37 @@
+# iroiro_v06_custom_skip.toml — カスタム skip_records（T166a-T166d 用）
+#
+# v0.6（Plan 006 §4.3 / §5）で skip_records が toml 化される。本 fixture は
+# ユーザーが独自の skip リストを指定するケースを再現するため、
+# skip_records = ["HDPT:FULL"]（1 件のみ・v0.6 デフォルト 14 件と明確に異なる）
+# を含む。
+#
+# T166a-T166d で以下を検証する:
+#   - T166a: --skip-records 省略時は toml の skip_records が使られる
+#   - T166b: --skip-records "" で明示的空 set（全件翻訳）
+#   - T166c: --skip-records "..." で完全置換（toml を無視）
+#   - T166d: --skip-records "hdpt:full" の CLI 側正規化 + 完全置換
+#
+# ※ skip_records を 1 件（HDPT:FULL のみ）にすることで、v0.5 までの
+#    DEFAULT_SKIP_RECORDS（12 件）と明確に異なる挙動を観察可能にしている。
+
+[iroiro]
+api_base      = "http://localhost:8081/v1"
+api_key       = "iroiro"
+model         = "ggml-org/gemma-4-12B-it-GGUF:Q4_K_M"
+timeout       = 120.0
+concurrency   = 1
+max_chars     = 4000
+retry_failed  = false
+
+system_prompt = """
+Skyrim MOD の英文を日本語に翻訳する。
+"""
+
+reject_phrases = ["了解", "翻訳します"]
+
+# === v0.6 の skip_records（カスタム・1 件のみ）===
+skip_records = ["HDPT:FULL"]
+
+[iroiro.rec_hints]
+"MGEF:FULL" = "魔法の効果名。"
+"BOOK:DESC" = "書籍の本文。"

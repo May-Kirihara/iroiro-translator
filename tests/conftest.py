@@ -181,3 +181,26 @@ def default_prompt_config():
             "上記の通りです",
         }),
     )
+
+
+# ----- v0.6 skip_records helper ----------------------------------------------
+# Plan 006 §5 / §6: 実装コードから DEFAULT_SKIP_RECORDS を完全削除（案 α 徹底版）し
+# toml 必須化する。テストヘルパーとして ``default_skip_records`` fixture を提供し、
+# v0.6 の新デフォルト（14 件・NG ガイド §9.1 Conservative Preset 準拠・EDID 抜き）
+# を利用可能にする。
+
+@pytest.fixture
+def default_skip_records() -> frozenset[str]:
+    """v0.6 のデフォルト skip_records（14 件・NG ガイド §9.1 Conservative Preset 準拠・EDID 抜き）。
+
+    Plan 006 §6: v0.5 までの 12 件から ``FLST:FULL`` / ``KYWD:FULL`` を追加した
+    14 件の新デフォルト（EDID は ``REC:FIELD`` 形式に不向きのため除外）。
+    本 fixture はテストが ``DEFAULT_SKIP_RECORDS`` 定数（v0.6 で削除）を import せず
+    意味的同等の値を利用できるようにする（Plan 006 §9.1 / B7 案 α の一貫性）。
+    """
+    return frozenset({
+        "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+        "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+        "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+        "FLST:FULL", "KYWD:FULL",
+    })

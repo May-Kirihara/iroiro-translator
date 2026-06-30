@@ -28,6 +28,14 @@ reject_phrases = [
   "もう一つのダミー",
 ]
 
+# === v0.6 新規（必須）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
+
 [iroiro.rec_hints]
 # === カスタム（既存の _REC_HINTS とは異なる値）===
 "WEAP:FULL" = "【武器名カスタムヒント】武器の名前です。"

@@ -7,6 +7,9 @@
 # v0.5 追加分（LLM 挙動中核・必須）: system_prompt / reject_phrases / [iroiro.rec_hints]
 #   T110 では ``result == {"retry_failed": True}`` の厳密比較をするが、WP-1 段階では
 #   3 新項目は未知キー扱いで無視されるため比較は成功する。WP-2 完了後に assertion 更新。
+#
+# v0.6 追加分（Plan 006 §5）: skip_records
+#   同様に WP-1 段階では未知キー扱い。WP-2 完了後に result dict に含まれる。
 
 [iroiro]
 retry_failed = true
@@ -16,6 +19,14 @@ system_prompt = """
 Skyrim MOD の英文を日本語に翻訳する。
 """
 reject_phrases = ["了解", "翻訳します"]
+
+# === v0.6 新規（必須）===
+skip_records = [
+  "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",
+  "FACT:FULL", "CLFM:FULL", "TREE:FULL", "MGEF:FULL",
+  "RACE:FULL", "EXPL:FULL", "HAZD:FULL", "BPTD:BPTN",
+  "FLST:FULL", "KYWD:FULL",
+]
 
 [iroiro.rec_hints]
 "MGEF:FULL" = "魔法の効果名。"
