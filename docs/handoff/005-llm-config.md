@@ -163,48 +163,48 @@ LLM 挙動の中核である `system_prompt`（翻訳方針）・`reject_phrases
 
 ---
 
-## 触ったファイル（全リスト・絶対パス）
+## 触ったファイル（全リスト・リポジトリ相対パス）
 
 ### 実装コード（WP-2）
 
-- `/mnt/holyland/Project/iroiro-translator/iroiro/translator.py`（修正・定数完全削除 + `PromptConfig` + `Translator` signature）
-- `/mnt/holyland/Project/iroiro-translator/iroiro/config.py`（修正・3 新 validator + `load_config()` 必須化・normalisation）
-- `/mnt/holyland/Project/iroiro-translator/iroiro/cli.py`（修正・`RunConfig.prompts` + `PromptConfig` 構築 + `--config` help 更新）
+- `iroiro/translator.py`（修正・定数完全削除 + `PromptConfig` + `Translator` signature）
+- `iroiro/config.py`（修正・3 新 validator + `load_config()` 必須化・normalisation）
+- `iroiro/cli.py`（修正・`RunConfig.prompts` + `PromptConfig` 構築 + `--config` help 更新）
 
 ### 設定・運用（WP-2）
 
-- `/mnt/holyland/Project/iroiro-translator/iroiro.toml.example`（修正・ヘッダ `(v0.3 / v0.4 / v0.5)` + 3 新項目の全文デフォルト + 注記）
+- `iroiro.toml.example`（修正・ヘッダ `(v0.3 / v0.4 / v0.5)` + 3 新項目の全文デフォルト + 注記）
 
 ### テスト（WP-1）
 
-- `/mnt/holyland/Project/iroiro-translator/tests/conftest.py`（修正・`default_prompt_config` fixture）
-- `/mnt/holyland/Project/iroiro-translator/tests/test_cli.py`（修正・`v05_default_config` fixture・`patch_translator.factory` 等の signature 追随）
-- `/mnt/holyland/Project/iroiro-translator/tests/test_translator.py`（修正・既存 signature 追随 + T143-T145, T157）
-- `/mnt/holyland/Project/iroiro-translator/tests/test_cli.py`（修正・既存 signature 追随 + T146-T148, T154）
-- `/mnt/holyland/Project/iroiro-translator/tests/test_config.py`（修正・T132-T142, T149-T156 追記 + 既存 v0.5 化）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_v05_full.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_v05_missing_prompt.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_v05_missing_reject.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_v05_missing_rec_hints.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_v05_empty_reject.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_v05_custom_prompt.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_full.toml`（修正・3 新項目追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_partial.toml`（修正・3 新項目追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_retry_true.toml`（修正・3 新項目追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_retry_false.toml`（修正・3 新項目追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_unknown_key.toml`（修正・3 新項目追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_empty_base.toml`（修正・3 新項目追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_max_chars_zero.toml`（修正・3 新項目追記）
+- `tests/conftest.py`（修正・`default_prompt_config` fixture）
+- `tests/test_cli.py`（修正・`v05_default_config` fixture・`patch_translator.factory` 等の signature 追随）
+- `tests/test_translator.py`（修正・既存 signature 追随 + T143-T145, T157）
+- `tests/test_cli.py`（修正・既存 signature 追随 + T146-T148, T154）
+- `tests/test_config.py`（修正・T132-T142, T149-T156 追記 + 既存 v0.5 化）
+- `tests/fixtures/iroiro_v05_full.toml`（新規）
+- `tests/fixtures/iroiro_v05_missing_prompt.toml`（新規）
+- `tests/fixtures/iroiro_v05_missing_reject.toml`（新規）
+- `tests/fixtures/iroiro_v05_missing_rec_hints.toml`（新規）
+- `tests/fixtures/iroiro_v05_empty_reject.toml`（新規）
+- `tests/fixtures/iroiro_v05_custom_prompt.toml`（新規）
+- `tests/fixtures/iroiro_full.toml`（修正・3 新項目追記）
+- `tests/fixtures/iroiro_partial.toml`（修正・3 新項目追記）
+- `tests/fixtures/iroiro_retry_true.toml`（修正・3 新項目追記）
+- `tests/fixtures/iroiro_retry_false.toml`（修正・3 新項目追記）
+- `tests/fixtures/iroiro_unknown_key.toml`（修正・3 新項目追記）
+- `tests/fixtures/iroiro_empty_base.toml`（修正・3 新項目追記）
+- `tests/fixtures/iroiro_max_chars_zero.toml`（修正・3 新項目追記）
 
 ### ドキュメント（WP-3）
 
-- `/mnt/holyland/Project/iroiro-translator/docs/usage.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/design.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/development.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/README.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/AGENTS.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/plans/005-llm-config.md`（新規・PM 作成）
-- `/mnt/holyland/Project/iroiro-translator/docs/handoff/005-llm-config.md`（新規・本ファイル）
+- `docs/usage.md`（修正）
+- `docs/design.md`（修正）
+- `docs/development.md`（修正）
+- `README.md`（修正）
+- `AGENTS.md`（修正）
+- `docs/plans/005-llm-config.md`（新規・PM 作成）
+- `docs/handoff/005-llm-config.md`（新規・本ファイル）
 
 ---
 

@@ -119,35 +119,35 @@ v0.4 では:
 
 ---
 
-## 触ったファイル（全リスト・絶対パス）
+## 触ったファイル（全リスト・リポジトリ相対パス）
 
 ### 実装コード（WP-2）
 
-- `/mnt/holyland/Project/iroiro-translator/iroiro/config.py`（修正）
-- `/mnt/holyland/Project/iroiro-translator/iroiro/cli.py`（修正）
-- `/mnt/holyland/Project/iroiro-translator/iroiro/progress.py`（修正）
+- `iroiro/config.py`（修正）
+- `iroiro/cli.py`（修正）
+- `iroiro/progress.py`（修正）
 
 ### 設定・運用（WP-2）
 
-- `/mnt/holyland/Project/iroiro-translator/iroiro.toml.example`（修正・`retry_failed` 行追加）
+- `iroiro.toml.example`（修正・`retry_failed` 行追加）
 
 ### テスト（WP-1）
 
-- `/mnt/holyland/Project/iroiro-translator/tests/test_config.py`（修正・T110-T113 追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/test_progress.py`（修正・T118-T121 追記・T23 docstring 更新）
-- `/mnt/holyland/Project/iroiro-translator/tests/test_cli.py`（修正・T114-T117 + T123-T129 追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_retry_true.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_retry_false.toml`（新規）
+- `tests/test_config.py`（修正・T110-T113 追記）
+- `tests/test_progress.py`（修正・T118-T121 追記・T23 docstring 更新）
+- `tests/test_cli.py`（修正・T114-T117 + T123-T129 追記）
+- `tests/fixtures/iroiro_retry_true.toml`（新規）
+- `tests/fixtures/iroiro_retry_false.toml`（新規）
 
 ### ドキュメント（WP-3）
 
-- `/mnt/holyland/Project/iroiro-translator/docs/usage.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/design.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/development.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/README.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/AGENTS.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/plans/004-retry-failed.md`（新規・PM 作成）
-- `/mnt/holyland/Project/iroiro-translator/docs/handoff/004-retry-failed.md`（新規・本ファイル）
+- `docs/usage.md`（修正）
+- `docs/design.md`（修正）
+- `docs/development.md`（修正）
+- `README.md`（修正）
+- `AGENTS.md`（修正）
+- `docs/plans/004-retry-failed.md`（新規・PM 作成）
+- `docs/handoff/004-retry-failed.md`（新規・本ファイル）
 
 ---
 

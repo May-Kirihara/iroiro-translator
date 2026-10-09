@@ -114,40 +114,40 @@ v0.3 では:
 
 ---
 
-## 触ったファイル（全リスト・絶対パス）
+## 触ったファイル（全リスト・リポジトリ相対パス）
 
 ### 実装コード
 
-- `/mnt/holyland/Project/iroiro-translator/iroiro/config.py`（修正）
-- `/mnt/holyland/Project/iroiro-translator/iroiro/cli.py`（修正）
+- `iroiro/config.py`（修正）
+- `iroiro/cli.py`（修正）
 
 ### 設定・運用
 
-- `/mnt/holyland/Project/iroiro-translator/iroiro.toml.example`（新規）
-- `/mnt/holyland/Project/iroiro-translator/.gitignore`（修正）
+- `iroiro.toml.example`（新規）
+- `.gitignore`（修正）
 
 ### テスト
 
-- `/mnt/holyland/Project/iroiro-translator/tests/test_config.py`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/test_cli.py`（修正・T103-T109 追記）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_broken.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_empty_base.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_full.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_max_chars_zero.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_not_table.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_other_only.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_partial.toml`（新規）
-- `/mnt/holyland/Project/iroiro-translator/tests/fixtures/iroiro_unknown_key.toml`（新規）
+- `tests/test_config.py`（新規）
+- `tests/test_cli.py`（修正・T103-T109 追記）
+- `tests/fixtures/iroiro_broken.toml`（新規）
+- `tests/fixtures/iroiro_empty_base.toml`（新規）
+- `tests/fixtures/iroiro_full.toml`（新規）
+- `tests/fixtures/iroiro_max_chars_zero.toml`（新規）
+- `tests/fixtures/iroiro_not_table.toml`（新規）
+- `tests/fixtures/iroiro_other_only.toml`（新規）
+- `tests/fixtures/iroiro_partial.toml`（新規）
+- `tests/fixtures/iroiro_unknown_key.toml`（新規）
 
 ### ドキュメント
 
-- `/mnt/holyland/Project/iroiro-translator/docs/usage.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/design.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/development.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/README.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/AGENTS.md`（修正）
-- `/mnt/holyland/Project/iroiro-translator/docs/plans/003-config-file.md`（新規・PM 作成）
-- `/mnt/holyland/Project/iroiro-translator/docs/handoff/003-config-file.md`（新規・本ファイル）
+- `docs/usage.md`（修正）
+- `docs/design.md`（修正）
+- `docs/development.md`（修正）
+- `README.md`（修正）
+- `AGENTS.md`（修正）
+- `docs/plans/003-config-file.md`（新規・PM 作成）
+- `docs/handoff/003-config-file.md`（新規・本ファイル）
 
 ---
 
