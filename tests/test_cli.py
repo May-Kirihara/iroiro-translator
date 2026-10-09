@@ -176,6 +176,7 @@ def _run_translate(
     output: Path | None = None,
     resume: bool = False,
     dry_run: bool = False,
+    force_restart: bool = False,
     api_base: str = "http://localhost:8081/v1",
     model: str = "test-model",
     max_chars: int = 4000,
@@ -190,6 +191,9 @@ def _run_translate(
         - ``None``（省略）: ``--skip-records`` を渡さない（toml の ``skip_records`` を使用）
         - ``""``（空文字）: ``--skip-records ""`` を渡す（明示的空 set = 全件翻訳）
         - 非空文字列: ``--skip-records <value>`` を渡す（toml を完全置換）
+
+    v0.8（Plan 008 §3.2）: ``force_restart`` は ``--force-restart`` フラグ。
+    WP-2 で実装されるまで未知オプションとして typer が exit 2 で拒否する（新規テスト RED）。
     """
     app = _get_app()
     runner = CliRunner()
@@ -198,6 +202,8 @@ def _run_translate(
         args += ["-o", str(output)]
     if resume:
         args.append("--resume")
+    if force_restart:
+        args.append("--force-restart")
     if dry_run:
         args.append("--dry-run")
     args += ["--api-base", api_base]
@@ -221,10 +227,16 @@ def test_T36_translate_basic(
     v05_default_config,
 ) -> None:
     """T36: tiny.xml を translate し、出力 XML を再 parse して期待通り。"""
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
     patch_translator(handler=lambda src, rec: f"【訳】{src}")
 
     output = tmp_path / "out.xml"
-    result = _run_translate(tiny_xml, output=output)
+    result = _run_translate(tmp_input, output=output)
     assert result.exit_code == 0, f"CLI 成功 (exit=0): {result.output}"
 
     # 出力ファイルが生成
@@ -264,10 +276,16 @@ def test_T37_dry_run_no_output(
     v05_default_config,
 ) -> None:
     """T37: --dry-run では出力ファイルを生成せず、処理件数を表示する。"""
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
     patch_translator(handler=lambda src, rec: f"【訳】{src}")  # 呼ばれないはず
 
     output = tmp_path / "out.xml"
-    result = _run_translate(tiny_xml, output=output, dry_run=True)
+    result = _run_translate(tmp_input, output=output, dry_run=True)
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
     # 出力ファイルが生成されない
@@ -369,7 +387,13 @@ def test_T39_failure_preserves_original_dest(
     MockTranslator が全エントリで IroiroError を投げる → 出力の全 <Dest> は
     入力の <Dest> と同じ（original_dest を保持）。
     """
+    import shutil
+
     from iroiro.xml_io import parse_xml
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
 
     def failing_handler(src: str, rec: str) -> str:
         raise IroiroError("mock failure")
@@ -377,11 +401,11 @@ def test_T39_failure_preserves_original_dest(
     patch_translator(handler=failing_handler)
 
     output = tmp_path / "out_fail.xml"
-    result = _run_translate(tiny_xml, output=output)
+    result = _run_translate(tmp_input, output=output)
     assert result.exit_code == 0, f"CLI は失敗しても exit=0（部分的失敗を許容）: {result.output}"
 
     # 出力の全 <Dest> が入力の <Dest> と同じ
-    in_entries, _, _, _ = parse_xml(tiny_xml)
+    in_entries, _, _, _ = parse_xml(tmp_input)
     out_entries, _, _, _ = parse_xml(output)
 
     assert len(in_entries) == len(out_entries)
@@ -405,10 +429,16 @@ def test_T40_xtranslator_interop(
 
     実物形式（BOM+CRLF+standalone）の入力を処理し、出力も同じ形式を保持することを検証。
     """
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "tiny_crlf_bom.xml"
+    shutil.copy(tiny_crlf_bom_xml, tmp_input)
+
     patch_translator(handler=lambda src, rec: f"【訳】{src}")
 
     output = tmp_path / "out_interop.xml"
-    result = _run_translate(tiny_crlf_bom_xml, output=output)
+    result = _run_translate(tmp_input, output=output)
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
     raw = output.read_bytes()
@@ -471,6 +501,12 @@ def test_T64_no_skip_default_records_translates_hdpt(
     デフォルト動作では HDPT:FULL は REC skip されるが、``--skip-records ""`` で
     空 set に完全置換すると翻訳される。
     """
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+
     translated_sources: list[str] = []
     translated_recs: list[str] = []
 
@@ -483,7 +519,7 @@ def test_T64_no_skip_default_records_translates_hdpt(
 
     output = tmp_path / "out_t64.xml"
     result = _run_translate(
-        skip_records_xml, output=output, skip_records_text=""
+        tmp_input, output=output, skip_records_text=""
     )
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
@@ -508,6 +544,12 @@ def test_T65_skip_records_adds_acti_full(
     ACTI:FULL "Wooden Door" はスキップされる。WEAP:FULL は置換後の set に無いため
     翻訳対象のまま。
     """
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+
     translated_sources: list[str] = []
 
     def handler(src: str, rec: str) -> str:
@@ -518,7 +560,7 @@ def test_T65_skip_records_adds_acti_full(
 
     output = tmp_path / "out_t65.xml"
     result = _run_translate(
-        skip_records_xml, output=output, skip_records_text="ACTI:FULL"
+        tmp_input, output=output, skip_records_text="ACTI:FULL"
     )
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
@@ -545,6 +587,12 @@ def test_T66_no_skip_default_plus_skip_records_mgef(
     このケースでは MGEF:FULL だけがスキップされ、HDPT/WEAP 等は翻訳される。
     （ユースケース: 魔法名をスキップしたいが他は翻訳したい）
     """
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+
     translated_recs: list[str] = []
     translated_sources: list[str] = []
 
@@ -557,7 +605,7 @@ def test_T66_no_skip_default_plus_skip_records_mgef(
 
     output = tmp_path / "out_t66.xml"
     result = _run_translate(
-        skip_records_xml,
+        tmp_input,
         output=output,
         skip_records_text="MGEF:FULL",
     )
@@ -590,10 +638,16 @@ def test_T67_dry_run_includes_rec_skip_line(
     Plan §5.3: dry-run 出力に「スキップ（REC 型）」を追加。
     skip_records.xml の場合、REC skip は 4件（HDPT/MGEF/RACE/BPTD）。
     """
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+
     patch_translator(handler=lambda src, rec: f"【訳】{src}")  # 呼ばれないはず
 
     output = tmp_path / "out_t67.xml"
-    result = _run_translate(skip_records_xml, output=output, dry_run=True)
+    result = _run_translate(tmp_input, output=output, dry_run=True)
     assert result.exit_code == 0, f"dry-run 成功: {result.output}"
 
     # 出力に「スキップ（REC 型）」が含まれる
@@ -618,10 +672,15 @@ def test_T69_dry_run_no_double_count_between_rec_and_lang(
       総8 = 翻訳対象2 + 言語skip2 + REC skip4 + 長文skip0
     """
     import re
+    import shutil
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
 
     patch_translator(handler=lambda src, rec: f"【訳】{src}")
 
-    result = _run_translate(skip_records_xml, dry_run=True)
+    result = _run_translate(tmp_input, dry_run=True)
     assert result.exit_code == 0, f"dry-run 成功: {result.output}"
 
     out = result.output
@@ -674,7 +733,13 @@ def test_T70_rec_skipped_entry_preserves_original_dest(
 
     HDPT:FULL "Male Head" の <Dest> は "Male Head" のまま（MockTranslator は呼ばれない）。
     """
+    import shutil
+
     from iroiro.xml_io import parse_xml
+
+    # fixture を tmp_path にコピー（stale progress.json の影響を避ける・Plan 008 §2.3）
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
 
     translated_sources: list[str] = []
 
@@ -685,11 +750,11 @@ def test_T70_rec_skipped_entry_preserves_original_dest(
     patch_translator(handler=handler)
 
     output = tmp_path / "out_t70.xml"
-    result = _run_translate(skip_records_xml, output=output)
+    result = _run_translate(tmp_input, output=output)
     assert result.exit_code == 0, f"CLI 成功: {result.output}"
 
     # 入出力を parse して HDPT:FULL エントリの <Dest> を比較
-    in_entries, _, _, _ = parse_xml(skip_records_xml)
+    in_entries, _, _, _ = parse_xml(tmp_input)
     out_entries, _, _, _ = parse_xml(output)
 
     assert len(in_entries) == len(out_entries) == 8
@@ -1697,7 +1762,7 @@ def test_T128_help_shows_retry_failed_flags(
 
 
 # ---------------------------------------------------------------------------
-# T129: --retry-failed 単独（--resume 無し）→ 警告ログ + exit 0
+# T129: --retry-failed + progress.json 無し → 警告ログ + exit 0
 # ---------------------------------------------------------------------------
 
 def test_T129_retry_failed_without_resume_warns_and_continues(
@@ -1708,12 +1773,17 @@ def test_T129_retry_failed_without_resume_warns_and_continues(
     caplog: pytest.LogCaptureFixture,
     v05_default_config,
 ) -> None:
-    """T129: ``--retry-failed`` 単独（``--resume`` 無し）→ 警告ログ + exit 0。
+    """T129: ``--retry-failed`` + progress.json 無し → 警告ログ + exit 0。
 
-    Plan 004 §11.4: ``--resume`` 無しの ``retry_failed`` は無意味（progress.json が
-    読み込まれないため pending 戻しも発生しない）だが、exit 2 にする程のエラーでは
-    ない。WARNING ログを出して通常実行を継続する（ユーザーが ``--resume`` 忘れに
-    気づけるよう）。設計判断: 緩い側（継続）に倒す。
+    v0.8（Plan 008 §3.4）: auto-resume 既定化により警告条件は ``not cfg.resume``
+    から「progress.json が実際に load されたか」（``cfg.force_restart or existing
+    is None``）に変更された。本テストは **progress.json が存在しない** 状態で
+    ``--retry-failed`` を渡すため、新旧どちらの条件でも WARNING が出る（v0.4 互換）。
+
+    Plan 004 §11.4: progress.json が読み込まれない状況での ``retry_failed`` は
+    無意味（pending 戻しも発生しない）だが、exit 2 にする程のエラーではない。
+    WARNING ログを出して通常実行を継続する（利用者が状況に気づけるよう）。
+    設計判断: 緩い側（継続）に倒す。
     """
     import logging
     import shutil
@@ -2504,4 +2574,1631 @@ def test_T168_example_contains_v06_skip_records_and_rec_hints(
     assert len(loaded_skip) == 14, (
         f"load_config の skip_records は 14 件（重複除去後）: "
         f"実際 {len(loaded_skip)} 件"
+    )
+
+
+# ===========================================================================
+# v0.7 MCM サブコマンド E2E テスト（Plan 007 §5.3）
+#
+# ``iroiro mcm INPUT.txt`` サブコマンドの検証。WP-2 で ``iroiro/cli.py`` に ``mcm``
+# サブコマンド + ``_run_mcm`` が追加されるまで、これらのテストは RED になる。
+#
+# 契約（Plan 007 §3.1 / §3.8）:
+#   iroiro mcm INPUT.txt [-o OUT] [--dry-run] [--resume] [--config PATH]
+#       [--api-base ..] [--api-key ..] [--model ..] [--concurrency N]
+#       [--max-chars N] [--timeout F] [-v] [--retry-failed/--no-retry-failed]
+#
+# ``--skip-records`` は MCM には無意味（REC 概念無し）のため **持たない**。
+# 指定時は typer が未知オプションとして exit 2 で拒否する（T-CLI-MCM-SKIP-RECORDS-REJECTED）。
+# 出力デフォルトは ``<input>.translated.txt``。
+# ===========================================================================
+
+
+def _mcm_registered() -> bool:
+    """``mcm`` サブコマンドが ``app`` に登録されているか（WP-2 完了で True）。
+
+    WP-1 段階では ``mcm`` 未登録のため False。負のテスト（exit != 0 を期待）で
+    「mcm 未登録による exit 2」を「mcm 登録済だが引数拒否による exit 2」と区別するための
+    前置 assert として使う。正のテスト（exit 0 を期待）は mcm 未登録で自然に RED になる。
+    """
+    import typer
+
+    from iroiro.cli import app
+    try:
+        group = typer.main.get_command(app)
+        return "mcm" in getattr(group, "commands", {})
+    except Exception:
+        return False
+
+
+def _run_mcm(
+    input_txt: Path,
+    *,
+    output: Path | None = None,
+    resume: bool = False,
+    dry_run: bool = False,
+    force_restart: bool = False,
+    config: Path | None = None,
+    api_base: str = "http://localhost:8081/v1",
+    model: str = "test-model",
+    max_chars: int | None = 4000,
+    timeout: int = 30,
+    concurrency: int = 1,
+    extra_args: list[str] | None = None,
+) -> object:
+    """``iroiro mcm`` を実行して CliRunner.invoke の結果を返す。
+
+    ``_run_translate`` とほぼ同形だが ``--skip-records`` は渡さない（MCM には無い）。
+    ``max_chars=None`` の時は ``--max-chars`` フラグを渡さない（toml 既定を使う）。
+    ``extra_args`` は ``--retry-failed`` 等の追加フラグ（v0.8・Plan 008 §5.5）。
+    """
+    app = _get_app()
+    runner = CliRunner()
+    args = ["mcm", str(input_txt)]
+    if output is not None:
+        args += ["-o", str(output)]
+    if config is not None:
+        args += ["--config", str(config)]
+    if resume:
+        args.append("--resume")
+    if force_restart:
+        args.append("--force-restart")
+    if dry_run:
+        args.append("--dry-run")
+    args += ["--api-base", api_base]
+    args += ["--model", model]
+    if max_chars is not None:
+        args += ["--max-chars", str(max_chars)]
+    args += ["--timeout", str(timeout)]
+    args += ["--concurrency", str(concurrency)]
+    if extra_args:
+        args += extra_args
+    return runner.invoke(app, args)
+
+
+def _read_mcm_output(path: Path) -> str:
+    """MCM 出力 TXT を読み戻す（BOM・encoding を推定して decode）。
+
+    T-CLI-MCM-04 等で出力の ``$KEY`` 保存・訳文確認に使う。UTF-16 LE BOM 付きを想定。
+    """
+    data = path.read_bytes()
+    if data.startswith(b"\xff\xfe"):
+        return data[2:].decode("utf-16-le")
+    if data.startswith(b"\xfe\xff"):
+        return data[2:].decode("utf-16-be")
+    if data.startswith(b"\xef\xbb\xbf"):
+        return data[3:].decode("utf-8")
+    return data.decode("utf-8")
+
+
+@pytest.fixture
+def mcm_tmp_input(tmp_path: Path) -> Path:
+    """mcm_tiny.txt を tmp_path にコピーした入力パス（fixtures 汚染防止）。"""
+    import shutil
+    dst = tmp_path / "mcm_tiny.txt"
+    shutil.copy(FIXTURES_DIR / "mcm_tiny.txt", dst)
+    return dst
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-01: --dry-run で件数表示・exit 0・出力ファイル未生成
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_01_dry_run(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-01: ``iroiro mcm <input> --dry-run`` で件数表示・exit 0・出力未生成。
+
+    dry-run では LLM（Translator）は呼ばれないことを検証するため、MockTranslator の
+    handler が呼ばれたら AssertionError を投げる「呼ばれたら fail」パターンにする
+    （XML 側の T37 と同じ patch_translator 利用方針）。
+    """
+    called: list[str] = []
+
+    def fail_if_called(src: str, rec: str) -> str:
+        called.append(src)
+        raise AssertionError(f"dry-run で Translator は呼ばれないはず: {src!r}")
+
+    patch_translator(handler=fail_if_called)
+
+    output = tmp_path / "out.txt"
+    result = _run_mcm(mcm_tmp_input, output=output, dry_run=True)
+    assert result.exit_code == 0, f"dry-run 成功: {result.output}"
+    assert not output.exists(), "dry-run では出力ファイルを生成しない"
+    # 何らかの件数表示がある（総エントリ数 等）
+    assert len(result.output) > 0
+    # Translator は一度も呼ばれない（dry-run は LLM 呼出無し）
+    assert called == [], f"dry-run で Translator は呼ばれない: {called!r}"
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-NO-ENTRIES: 翻訳可能エントリ0件を dry-run → 「総エントリ数: 0」表示
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_NO_ENTRIES(
+    tmp_path: Path,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-NO-ENTRIES: 翻訳可能エントリ0件の MCM を dry-run し ``総エントリ数: 0`` 表示。
+
+    Plan 007 §5.1 T-MCM-NO-ENTRIES の CLI 側カバレッジ。空行とタブ無し非空行のみの
+    MCM TXT を dry-run すると、stdout に ``総エントリ数: 0`` が表示され、出力ファイルは
+    生成されない。XML 側の T69（dry-run 件数表示）と対称。
+
+    ※ WP-1 段階では mcm サブコマンド未登録のため RED。WP-2 完了後に green 化。
+    """
+    no_entries_txt = tmp_path / "no_entries.txt"
+    # 空行 + コメント行のみ（タブ含む行なし → entries == []）
+    no_entries_txt.write_text("\n# comment\n\n# another\n", encoding="utf-8")
+
+    output = tmp_path / "out.txt"
+    result = _run_mcm(no_entries_txt, output=output, dry_run=True)
+    assert result.exit_code == 0, f"dry-run 成功: {result.output}"
+    assert "総エントリ数: 0" in result.output, (
+        f"翻訳可能エントリ0件で「総エントリ数: 0」が表示される: {result.output!r}"
+    )
+    assert not output.exists(), "dry-run では出力ファイルを生成しない"
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-02: --resume で progress.json を読んで続き
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_02_resume(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-02: ``--resume`` で progress.json の訳文を再利用する。
+
+    事前に progress.json に index 0 の訳文を登録 → resume 実行 → index 0 は既存訳文。
+    skip_records_fingerprint は MCM では frozenset() を想定するが、v0.6.1 で
+    fingerprint 不一致は WARNING のみ（exit 0）のため、空 set の fingerprint で作成する。
+    """
+    from iroiro.progress import (
+        compute_input_hash,
+        compute_skip_records_fingerprint,
+    )
+
+    progress_path = tmp_path / (mcm_tmp_input.name + ".iroiro-progress.json")
+    input_hash = compute_input_hash(mcm_tmp_input)
+    # MCM は skip_records=frozenset() で動く（§3.4）ため、その fingerprint を使う
+    fp_empty = compute_skip_records_fingerprint(frozenset())
+    preexisting = "【既存訳】タイトル"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "input_path": str(mcm_tmp_input),
+                "input_hash": input_hash,
+                "api_base": "http://localhost:8081/v1",
+                "model": "test-model",
+                "skip_records_fingerprint": fp_empty,
+                "entries": {0: preexisting},
+                "failed": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    called: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called.append(src)
+        return f"【新規訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_resume.txt"
+    result = _run_mcm(mcm_tmp_input, output=output, resume=True)
+    assert result.exit_code == 0, f"resume 成功: {result.output}"
+
+    # 出力を読み戻し index 0 が既存訳文
+    decoded = _read_mcm_output(output)
+    assert "$MCM_TITLE\t【既存訳】タイトル" in decoded, (
+        f"index 0 は progress.json の既存訳文: {decoded!r}"
+    )
+    # index 0 の source は MockTranslator に渡されない（resume skip）
+    assert "Hello {0} World" not in called
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-03: -o OUT で出力パス指定
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_03_output_path(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-03: ``-o OUT`` で指定パスに出力する。"""
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+    output = tmp_path / "custom_output.txt"
+    result = _run_mcm(mcm_tmp_input, output=output)
+    assert result.exit_code == 0, f"成功: {result.output}"
+    assert output.exists(), "-o で指定したパスに出力される"
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-DEFAULT-OUTPUT-PATH: -o 省略 → <stem>.translated.txt が生成（回帰ガード）
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_DEFAULT_OUTPUT_PATH(
+    mcm_tmp_input: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-DEFAULT-OUTPUT-PATH: ``-o`` 省略時のデフォルト出力が ``.translated.txt``。
+
+    Plan 007 §3.2 は MCM のデフォルト出力を ``<input>.translated.txt`` と要求する。
+    ``iroiro/cli.py`` の ``_default_output_path`` は ``.translated.xml`` をハードコード
+    するため、WP-2 が ``_run_mcm`` でこれを安易に流用すると ``mcm_tiny.translated.xml``
+    になってしまう（ユーザー可視回帰・拡張子が XML になってしまい MCM として不正）。
+
+    ``-o`` を渡さず ``iroiro mcm INPUT`` を実行し:
+      - ``<stem>.translated.txt`` が存在すること（§3.2 要求）
+      - ``<stem>.translated.xml`` が存在 **しない** こと（``_default_output_path`` の
+        ``.translated.xml`` ハードコード流用による回帰を検知）
+
+    ※ WP-1 段階では mcm サブコマンド未登録のため RED。WP-2 でデフォルト出力パスを
+    ``.translated.txt`` に正しく実装した場合に green 化する。
+    """
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    # mcm_tmp_input は cwd(tmp_path) / "mcm_tiny.txt"。デフォルト出力は同ディレクトリの
+    # mcm_tiny.translated.txt になるはず（§3.2）。
+    expected_txt = mcm_tmp_input.with_name("mcm_tiny.translated.txt")
+    # 回帰ガード: _default_output_path の .translated.xml 流用を検知するためのパス
+    regression_xml = mcm_tmp_input.with_name("mcm_tiny.translated.xml")
+
+    # -o を渡さず実行（デフォルト出力パスを使用）
+    result = _run_mcm(mcm_tmp_input)
+    assert result.exit_code == 0, f"成功: {result.output}"
+    assert expected_txt.exists(), (
+        f"デフォルト出力は <stem>.translated.txt（§3.2）: {expected_txt}"
+    )
+    # 回帰ガード: .translated.xml は生成されない（_default_output_path の .xml 流用検知）
+    assert not regression_xml.exists(), (
+        f".translated.xml は生成されない（_default_output_path の .xml 流用は回帰）: "
+        f"{regression_xml}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-04: 1エントリ翻訳 → 出力 TXT の $KEY 保存・値が訳文
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_04_translate_preserves_key(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-04: 翻訳後の出力 TXT で ``$KEY`` が保存され値が訳文。
+
+    既存 ``patch_translator`` fixture で MockTranslator を注入し、handler が
+    ``{N}`` プレースホルダを保存した固定訳文を返す。出力を UTF-16 LE として読み戻し、
+    ``$MCM_OPT_YES`` の値が訳文になっていること・``$KEY`` がそのまま残ることを検証。
+    """
+    def handler(src: str, rec: str) -> str:
+        # {N} を保存した固定訳文（トークン整合性検証をパスするため）。
+        # f-string ではなく通常 str でリテラル {0} を含める。f-string にすると
+        # {0} が位置引数として展開され "こんにちは 0 世界" になってしまい、
+        # {0} プレースホルダ保存を検証しない pass-for-wrong-reason になる。
+        if "{0}" in src:
+            return "こんにちは {0} 世界"
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_translated.txt"
+    result = _run_mcm(mcm_tmp_input, output=output)
+    assert result.exit_code == 0, f"成功: {result.output}"
+
+    decoded = _read_mcm_output(output)
+    # $KEY は保存
+    assert "$MCM_TITLE\t" in decoded
+    assert "$MCM_OPT_YES\t" in decoded
+    # 値が訳文になっている（index 1 = $MCM_OPT_YES/Yes）
+    assert "$MCM_OPT_YES\t【訳】Yes" in decoded, (
+        f"$MCM_OPT_YES の値が訳文: {decoded!r}"
+    )
+    # {0} プレースホルダが訳文に保存されている（0 単独に崩れていない）。
+    # patch_translator は Translator のトークン整合性検証をバイパスするため、
+    # 出力 TXT を読み戻して明示的に {0} リテラルの保存を検証する。
+    assert "$MCM_TITLE\tこんにちは {0} 世界" in decoded, (
+        f"$MCM_TITLE の値が {{0}} を含む訳文: {decoded!r}"
+    )
+    assert "{0}" in decoded, f"出力に {{0}} リテラルが残る: {decoded!r}"
+    # f-string バグ（{0} → 0 単独に崩れる）の回帰検知
+    assert "こんにちは 0 世界" not in decoded, (
+        f"{{0}} が 0 単独に崩れていない（f-string バグ回帰防止）: {decoded!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-05: iroiro.toml 無し（--config 指定せず cwd に無い）で dry-run → exit 2
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_05_no_config_errors(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-CLI-MCM-05: ``iroiro.toml`` 無しで dry-run → exit 2 エラー（v0.5 哲学・§3.4）。
+
+    cwd に iroiro.toml が無く ``--config`` も未指定 → ``load_config`` が IroiroError → exit 2。
+    前置 ``_mcm_registered()`` で mcm サブコマンド存在を要求（未登録による exit 2 と区別）。
+    """
+    assert _mcm_registered(), "mcm サブコマンドが登録済であること（WP-2 完了後）"
+
+    # cwd に iroiro.toml が無い状態を保証
+    empty_cwd = tmp_path / "empty_cwd"
+    empty_cwd.mkdir()
+    monkeypatch.chdir(empty_cwd)
+
+    output = tmp_path / "out.txt"
+    result = _run_mcm(mcm_tmp_input, output=output, dry_run=True)
+    assert result.exit_code == 2, f"toml 無しは exit 2: {result.output}"
+    assert not output.exists()
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-HELP: iroiro mcm --help の stdout に --skip-records が含まれない
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_HELP_no_skip_records() -> None:
+    """T-CLI-MCM-HELP: ``iroiro mcm --help`` に ``--skip-records`` が含まれない（§3.1）。
+
+    前置 ``_mcm_registered()`` で mcm 存在を要求（未登録だと --help 自体が exit 2 になるため）。
+    """
+    assert _mcm_registered(), "mcm サブコマンドが登録済であること（WP-2 完了後）"
+
+    app = _get_app()
+    runner = CliRunner()
+    result = runner.invoke(app, ["mcm", "--help"])
+    assert result.exit_code == 0, f"--help 成功: {result.output}"
+    assert "--skip-records" not in result.output, (
+        f"mcm サブコマンドに --skip-records は無い: {result.output}"
+    )
+    # 共通オプションは存在する
+    assert "--dry-run" in result.output
+    assert "--max-chars" in result.output
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-SKIP-RECORDS-REJECTED: iroiro mcm X --skip-records Y → exit != 0
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_SKIP_RECORDS_REJECTED(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-SKIP-RECORDS-REJECTED: ``mcm`` に ``--skip-records`` を渡すと typer 拒否。
+
+    MCM には ``--skip-records`` が無いため、typer/click が未知オプションとして
+    exit code 2 で拒否する。前置 ``_mcm_registered()`` で mcm サブコマンド存在を要求
+    （mcm 未登録による exit 2 と区別）。runtime/config エラー（同じく exit 2 になりうる）
+    とも区別するため、stderr/stdout に ``--skip-records`` を含む unknown option 系
+    メッセージがあることを併せて検証する。
+    """
+    assert _mcm_registered(), "mcm サブコマンドが登録済であること（WP-2 完了後）"
+
+    app = _get_app()
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["mcm", str(mcm_tmp_input), "--skip-records", "WEAP:FULL"]
+    )
+    # typer/click の unknown option 拒否は exit code 2
+    assert result.exit_code == 2, (
+        f"--skip-records は mcm の未知オプションとして exit 2 で拒否: "
+        f"実際 exit_code={result.exit_code}\noutput: {result.output}"
+    )
+    # stderr/stdout に --skip-records を含む unknown option 系メッセージがある
+    # （runtime/config エラーによる exit 2 と区別するため）。
+    # click 版差分で stderr の扱いが異なるため getattr で安全に取得する。
+    combined = result.output + getattr(result, "stderr", "")
+    assert "--skip-records" in combined, (
+        f"エラーメッセージに --skip-records が含まれる（unknown option 系）: "
+        f"output={result.output!r} stderr={getattr(result, 'stderr', '<n/a>')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T-CLI-MCM-MAXCHARS-ZERO: --max-chars 0 で全件 skip・出力値が原文のまま
+# ---------------------------------------------------------------------------
+
+def test_T_CLI_MCM_MAXCHARS_ZERO(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CLI-MCM-MAXCHARS-ZERO: ``--max-chars 0`` で全件 skip・値が原文のまま（XML と対称）。
+
+    全エントリが ``len(source) > 0`` で max_chars 超過 → skipped → ``original_dest``
+    （= 英文）が出力値になる（§3.2.1）。ただし値空（``$MCM_EMPTY`` / ``\t`` 行）は
+    ``is_translation_needed("")`` False で言語 skip になる（いずれにせよ原文 = 空のまま）。
+    """
+    called: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_zero.txt"
+    result = _run_mcm(mcm_tmp_input, output=output, max_chars=0)
+    assert result.exit_code == 0, f"成功: {result.output}"
+
+    # MockTranslator は一度も呼ばれない（全件 skip）
+    assert called == [], f"--max-chars 0 で全件 skip: {called!r}"
+
+    decoded = _read_mcm_output(output)
+    # 値が原文のまま（英文保持・§3.2.1）
+    assert "$MCM_TITLE\tHello {0} World" in decoded
+    assert "$MCM_OPT_YES\tYes" in decoded
+
+
+# ---------------------------------------------------------------------------
+# T-MCM-FAIL: MockTranslator が常に失敗 → 出力の該当行が英文のまま
+# ---------------------------------------------------------------------------
+
+def test_T_MCM_FAIL_preserves_english(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-FAIL: LLM 失敗時の出力値が英文のまま（空にならない・§3.2.1 blocking fix）。
+
+    ``original_dest=source`` で構築されているため、失敗時は英文値がそのまま残る。
+    """
+    def failing(src: str, rec: str) -> str:
+        raise IroiroError("mock failure")
+
+    patch_translator(handler=failing)
+
+    output = tmp_path / "out_fail.txt"
+    result = _run_mcm(mcm_tmp_input, output=output)
+    assert result.exit_code == 0, f"部分失敗でも exit 0: {result.output}"
+
+    decoded = _read_mcm_output(output)
+    # 失敗エントリの値が英文のまま（空にならない）
+    assert "$MCM_TITLE\tHello {0} World" in decoded, (
+        f"失敗時も英文保持: {decoded!r}"
+    )
+    assert "$MCM_OPT_YES\tYes" in decoded
+
+
+# ---------------------------------------------------------------------------
+# T-MCM-LONG: --max-chars 1 等で超過 skip → 出力値が英文のまま
+# ---------------------------------------------------------------------------
+
+def test_T_MCM_LONG_skip_preserves_english(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-LONG: ``--max-chars`` 超過スキップ時の出力値が英文のまま（§3.2.1）。
+
+    ``--max-chars 1`` で全エントリが超過 skip される（``Yes`` = 3文字も 1 を超過）。
+    出力値が原文のまま残ることを検証する。T-CLI-MCM-MAXCHARS-ZERO と対称に
+    ``called`` リストで「何も翻訳されない」ことを強く主張し、長文エントリだけでなく
+    短いエントリ（``$MCM_OPT_YES``）も原文のままであることを検証する。
+    """
+    called: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_long.txt"
+    result = _run_mcm(mcm_tmp_input, output=output, max_chars=1)
+    assert result.exit_code == 0, f"成功: {result.output}"
+
+    # --max-chars 1 で全件超過 skip → MockTranslator は呼ばれない
+    assert called == [], f"--max-chars 1 で全件 skip: {called!r}"
+
+    decoded = _read_mcm_output(output)
+    # 長文エントリ（Hello {0} World 等）は超過 skip → 英文のまま
+    assert "$MCM_TITLE\tHello {0} World" in decoded
+    # 短いエントリ（Yes = 3文字）も max_chars=1 超過 → 原文のまま（対称ガード）
+    assert "$MCM_OPT_YES\tYes" in decoded, (
+        f"短いエントリも超過 skip で原文のまま: {decoded!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T-MCM-JP: $MCM_JP エントリが skip され原文（日本語）のまま出力
+# ---------------------------------------------------------------------------
+
+def test_T_MCM_JP_skipped(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-JP: 日本語混入エントリがスキップされ原文（日本語）のまま出力される。
+
+    ``$MCM_JP`` の source は ``これは日本語です`` → ``is_translation_needed`` False →
+    言語 skip → ``original_dest``（= 日本語原文）がそのまま出力値になる。
+    """
+    called: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_jp.txt"
+    result = _run_mcm(mcm_tmp_input, output=output)
+    assert result.exit_code == 0, f"成功: {result.output}"
+
+    # 日本語エントリは翻訳されない
+    assert "これは日本語です" not in called, "日本語エントリは skip される"
+
+    decoded = _read_mcm_output(output)
+    assert "$MCM_JP\tこれは日本語です" in decoded, (
+        f"日本語エントリは原文のまま: {decoded!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# T-MCM-RESUME: パススルー行挟む状態で resume し index 対応が正しい
+# ---------------------------------------------------------------------------
+
+def test_T_MCM_RESUME_index_correspondence(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-RESUME: パススルー行（空行・コメント）を挟んだ状態で resume し index が正しい。
+
+    mcm_tiny.txt は空行・コメント行を挟むが、entries の index は翻訳可能エントリ通し番号
+    （§3.6）。progress.json に index 2（``$MCM_DESC``）の訳文を事前登録 → resume →
+    index 2 だけ既存訳文になり、他は新規訳文。パススルー行の存在で index 対応が崩れない。
+    """
+    from iroiro.progress import (
+        compute_input_hash,
+        compute_skip_records_fingerprint,
+    )
+
+    progress_path = tmp_path / (mcm_tmp_input.name + ".iroiro-progress.json")
+    input_hash = compute_input_hash(mcm_tmp_input)
+    fp_empty = compute_skip_records_fingerprint(frozenset())
+    # index 2 = $MCM_DESC（空行・コメント行を挟んだ後の3番目の翻訳可能エントリ）
+    preexisting = "【既存】切り替え"
+    progress_path.write_text(
+        json.dumps(
+            {
+                "input_path": str(mcm_tmp_input),
+                "input_hash": input_hash,
+                "api_base": "http://localhost:8081/v1",
+                "model": "test-model",
+                "skip_records_fingerprint": fp_empty,
+                "entries": {2: preexisting},
+                "failed": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    called: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called.append(src)
+        return f"【新規訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_resume_idx.txt"
+    result = _run_mcm(mcm_tmp_input, output=output, resume=True)
+    assert result.exit_code == 0, f"resume 成功: {result.output}"
+
+    decoded = _read_mcm_output(output)
+    # index 2 ($MCM_DESC) は既存訳文
+    assert "$MCM_DESC\t【既存】切り替え" in decoded, (
+        f"index 2 は既存訳文: {decoded!r}"
+    )
+    # index 0 ($MCM_TITLE) は新規訳文（resume で skip されない）。handler が
+    # ``【新規訳】{src}`` を返すため、source ``Hello {0} World`` の訳文は
+    # ``【新規訳】Hello {0} World`` になる。``$KEY`` が残るだけの弱い主張ではなく、
+    # モック訳文で実際に新規翻訳されたことを強く主張する（index 2 の既存訳文側と対称）。
+    assert "$MCM_TITLE\t【新規訳】Hello {0} World" in decoded, (
+        f"index 0 は新規訳文（resume skip 対象外）: {decoded!r}"
+    )
+    # パススルー行も保持される
+    assert "# this is a comment line (tabless, passthrough)" in decoded
+    # index 2 の source は新規翻訳されない
+    assert "Toggle this option" not in called
+
+
+# ===========================================================================
+# v0.8: 自動レジューム + --force-restart（Plan 008 §5）
+#
+# Plan 008 §3.1: progress.json が存在する場合、--resume フラグ無しで自動 resume。
+# §3.2: --force-restart で既存 progress.json を削除して fresh 開始。
+# §3.3: hash 不一致・JSON 破損は --resume 無しでも exit 2（振る舞い変更）。
+# §3.4: retry_failed 警告条件を not cfg.resume → (force_restart or existing is None) に変更。
+#
+# WP-2 で実装されるまで、auto-resume / --force-restart / 振る舞い変更 に関わる
+# 正系テストは RED。既存 --resume 後方互換テスト（T-AUTO-03 の resume 本体・
+# T-RETRY-WARN-02 等）は GREEN。
+# ===========================================================================
+
+
+def _write_progress_json(
+    progress_path: Path,
+    input_path: Path,
+    *,
+    entries: dict[int, str] | None = None,
+    failed: list[int] | None = None,
+    input_hash: str | None = None,
+    skip_records_fingerprint: str | None = None,
+) -> None:
+    """progress.json を書き出す（v0.8 auto-resume テスト用ヘルパー）。
+
+    ``input_hash`` / ``skip_records_fingerprint`` を省略した場合は入力ファイルと
+    v0.6 デフォルト skip_records（14 件）から計算した正しい値を書く（hash 一致
+    シナリオ用）。hash 不一致シナリオ（T-HASH-01 等）では明示的に誤った値を渡す。
+    MCM テストでは ``skip_records_fingerprint=compute_skip_records_fingerprint(frozenset())``
+    を明示的に渡す（MCM は REC 概念無し）。
+    """
+    from iroiro.progress import compute_input_hash, compute_skip_records_fingerprint
+
+    if input_hash is None:
+        input_hash = compute_input_hash(input_path)
+    if skip_records_fingerprint is None:
+        skip_records_fingerprint = compute_skip_records_fingerprint(
+            _V06_DEFAULT_SKIP_RECORDS
+        )
+    progress_path.write_text(
+        json.dumps(
+            {
+                "input_path": str(input_path),
+                "input_hash": input_hash,
+                "api_base": "http://localhost:8081/v1",
+                "model": "test-model",
+                "skip_records_fingerprint": skip_records_fingerprint,
+                "entries": entries or {},
+                "failed": failed or [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
+# §5.1 自動レジューム
+# ---------------------------------------------------------------------------
+
+def test_T_AUTO_01_auto_resume_without_flag(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-AUTO-01: progress.json 有り（hash 一致）・--resume 無し → 自動 resume。
+
+    Plan 008 §3.1 / §5.1: progress.json が存在し hash が一致すれば --resume フラグ
+    無しで既存訳文を再利用する。entry[0] は progress.json の訳文になり MockTranslator
+    に渡されない。WP-2 で実装されるまで RED（現状は fresh で entry[0] が翻訳される）。
+    """
+    import shutil
+
+    from iroiro.xml_io import parse_xml
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    preexisting = "【既存訳文】AUTO01"
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: preexisting})
+
+    called_sources: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called_sources.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_auto01.xml"
+    result = _run_translate(tmp_input, output=output)  # --resume 無し
+    assert result.exit_code == 0, f"auto-resume 成功: {result.output}"
+
+    # entry[0] は progress.json の既存訳文（auto-resume で再利用）
+    out_entries, _, _, _ = parse_xml(output)
+    assert out_entries[0].original_dest == preexisting, (
+        f"entry[0] は progress.json の既存訳文（auto-resume）: "
+        f"{out_entries[0].original_dest!r}"
+    )
+
+    # entry[0] は MockTranslator に渡されない（auto-resume skip）
+    src_entries, _, _, _ = parse_xml(tmp_input)
+    assert src_entries[0].source not in called_sources, (
+        f"entry[0] は auto-resume でスキップされ MockTranslator に渡されない: "
+        f"{called_sources!r}"
+    )
+
+
+def test_T_AUTO_02_no_progress_fresh(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-AUTO-02: progress.json 無し・--resume 無し → fresh（従来同様）。
+
+    progress.json が存在しない場合は auto-resume の対象外・fresh 開始。
+    GREEN（新旧どちらでも entry[0] が MockTranslator で翻訳される）。
+    """
+    import shutil
+
+    from iroiro.xml_io import parse_xml
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    # progress.json は作らない（fresh）
+
+    called_sources: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called_sources.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_auto02.xml"
+    result = _run_translate(tmp_input, output=output)  # --resume 無し
+    assert result.exit_code == 0, f"fresh 成功: {result.output}"
+
+    # entry[0] は MockTranslator で翻訳される（fresh）
+    out_entries, _, _, _ = parse_xml(output)
+    assert out_entries[0].original_dest.startswith("【訳】"), (
+        f"entry[0] は fresh で MockTranslator 訳文: {out_entries[0].original_dest!r}"
+    )
+
+    src_entries, _, _, _ = parse_xml(tmp_input)
+    assert src_entries[0].source in called_sources, (
+        "entry[0] は fresh で MockTranslator に渡される"
+    )
+
+
+def test_T_AUTO_03_explicit_resume_backward_compat(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    caplog: pytest.LogCaptureFixture,
+    v05_default_config,
+) -> None:
+    """T-AUTO-03: --resume 明示 + progress.json 有り → 従来同様 resume（後方互換）。
+
+    Plan 008 §3.1: --resume は後方互換 no-op（auto-resume 既定化後も受け付ける）。
+    拡張（QA Minor-1）: 明示 --resume 時に INFO ログで「既定動作 / no-op / deprecated」
+    のいずれかを案内する。WP-2 で INFO 実装されるまでこの INFO 部分は RED。
+    resume 本体（entry[0] が progress.json 訳文）は GREEN。
+    """
+    import logging
+    import shutil
+
+    from iroiro.xml_io import parse_xml
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    preexisting = "【既存訳文】AUTO03"
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: preexisting})
+
+    called_sources: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called_sources.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_auto03.xml"
+    with caplog.at_level(logging.INFO):
+        result = _run_translate(tmp_input, output=output, resume=True)
+    assert result.exit_code == 0, f"resume 成功: {result.output}"
+
+    # resume 本体: entry[0] は progress.json の既存訳文（GREEN）
+    out_entries, _, _, _ = parse_xml(output)
+    assert out_entries[0].original_dest == preexisting, (
+        f"entry[0] は progress.json の既存訳文（--resume 後方互換）: "
+        f"{out_entries[0].original_dest!r}"
+    )
+    src_entries, _, _, _ = parse_xml(tmp_input)
+    assert src_entries[0].source not in called_sources, (
+        "entry[0] は resume でスキップ"
+    )
+
+    # 拡張: 明示 --resume 時の deprecated INFO（RED until WP-2）
+    info_msgs = [r.getMessage() for r in caplog.records]
+    all_text = " ".join(info_msgs) + " " + result.output
+    assert any(kw in all_text for kw in ("既定動作", "no-op", "deprecated")), (
+        f"明示 --resume 時に deprecated/no-op INFO が出る: "
+        f"all_text={all_text!r}"
+    )
+
+
+def test_T_AUTO_04_dry_run_auto_resume(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-AUTO-04: dry-run + progress.json 有り → 「再開済: N」表示。
+
+    Plan 008 §5.1: dry-run も auto-resume の対象。progress.json の entry[0] が
+    translated 扱いになり「再開済」行に表示される。WP-2 で RED→green
+    （現状は auto-resume 未実装なので「再開済」が表示されない）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    preexisting = "【既存訳文】AUTO04"
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: preexisting})
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_auto04.xml"
+    result = _run_translate(tmp_input, output=output, dry_run=True)  # --resume 無し
+    assert result.exit_code == 0, f"dry-run 成功: {result.output}"
+
+    # dry-run も auto-resume する → entry[0] が translated 扱いで件数 1 が表示される。
+    # ラベル文字列は cli.py の ``f"再開済（progress.json）: {already_done}"`` に合わせる。
+    # 「再開済」の有無だけでは「再開済: 0」でも pass してしまうため件数 1 を厳密検証。
+    assert "再開済（progress.json）: 1" in result.output, (
+        f"dry-run で auto-resume され entry[0] が「再開済」件数 1 で表示される: "
+        f"{result.output!r}"
+    )
+
+
+def test_T_AUTO_FP_01_fingerprint_mismatch_warning_only(
+    skip_records_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    caplog: pytest.LogCaptureFixture,
+    v05_default_config,
+) -> None:
+    """T-AUTO-FP-01: auto-resume + skip_records fingerprint 不一致 → WARNING のみ・exit 0。
+
+    Plan 008 §5.6（QA Minor-2）: T82 の auto-resume 版。fingerprint 不一致は
+    WARNING ログのみで resume を継続し exit 2 に昇格しないことの回帰ガード。
+    WP-2 で RED→green（現状は auto-resume 未実装のため WARNING が出ない）。
+    """
+    import logging
+    import shutil
+
+    tmp_input = tmp_path / "skip_records.xml"
+    shutil.copy(skip_records_xml, tmp_input)
+
+    # progress.json は v0.6 デフォルト 14 件の fingerprint で作成
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: "既存訳"})
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    # --skip-records "" で空 set（fingerprint が "" になり不一致）
+    output = tmp_path / "out_auto_fp01.xml"
+    with caplog.at_level(logging.WARNING):
+        result = _run_translate(
+            tmp_input,
+            output=output,
+            skip_records_text="",  # 空 set → fingerprint "" で不一致
+        )
+
+    assert result.exit_code == 0, (
+        f"fingerprint mismatch は WARNING のみで exit 0（auto-resume）: "
+        f"実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+    # WARNING または stdout に fingerprint mismatch への言及がある
+    warning_msgs = [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+    ]
+    all_text = " ".join(warning_msgs) + " " + result.output
+    assert "fingerprint mismatch" in all_text, (
+        f"fingerprint mismatch の WARNING が出る（auto-resume で検出）: "
+        f"warnings={warning_msgs!r}\nstdout: {result.output!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §5.2 --force-restart
+# ---------------------------------------------------------------------------
+
+def test_T_FORCE_01_dry_run_deletes_progress(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-FORCE-01: progress.json 有り + --force-restart（dry-run）→ progress.json 削除。
+
+    Plan 008 §3.2 / §5.2: --force-restart は起動時に progress.json を削除する。
+    dry-run でも削除する（§3.2 明示的 opt-in 優先）。WP-2 で RED→green
+    （現状は --force-restart 未実装で exit 2・ファイルは残る）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: "旧訳文"})
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_force01.xml"
+    result = _run_translate(
+        tmp_input, output=output, force_restart=True, dry_run=True
+    )
+    assert result.exit_code == 0, f"--force-restart dry-run 成功: {result.output}"
+
+    # progress.json が削除された（dry-run でも削除・§3.2）
+    assert not progress_path.exists(), (
+        f"--force-restart で progress.json が削除される: {progress_path}"
+    )
+
+
+def test_T_FORCE_02_force_restart_dry_run_shows_zero_resumed(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-FORCE-02: --force-restart dry-run → 「再開済」が 0（fresh・resume 未適用）。
+
+    Plan 008 §5.2: --force-restart は progress.json を **先に削除** してから fresh
+    開始するため、dry-run 表示に「再開済」行は出ない（already_done == 0 で行自体が
+    非表示・cli.py の ``if already_done:`` ガード）。これにより「load → apply entries
+    → delete file」する誤実装（apply すれば already_done == 1 で「再開済
+    （progress.json）: 1」が出る）を検知する。dry-run でも削除する仕様（§3.2）なので
+    progress.json ファイル不在も併せて検証。WP-2 で RED→green
+    （現状は --force-restart 未実装で exit 2）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    preexisting = "【既存訳文】FORCE02"
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: preexisting})
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_force02.xml"
+    result = _run_translate(
+        tmp_input, output=output, force_restart=True, dry_run=True
+    )
+    assert result.exit_code == 0, f"--force-restart dry-run 成功: {result.output}"
+
+    # 「load → apply → delete」誤実装だと entry[0] が translated 扱いになり
+    # 「再開済（progress.json）: 1」が表示される。正実装（delete 先行 → fresh）なら
+    # already_done == 0 で「再開済」行は出ない。
+    assert "再開済" not in result.output, (
+        f"--force-restart は progress.json 適用前に削除 → 「再開済」表示無し: "
+        f"{result.output!r}"
+    )
+
+    # dry-run でも progress.json を削除する（§3.2・T-FORCE-01 と同じ削除仕様）
+    assert not progress_path.exists(), (
+        f"--force-restart dry-run で progress.json が削除される: {progress_path}"
+    )
+
+
+def test_T_FORCE_03_translate_no_resume(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-FORCE-03: progress.json 有り + --force-restart（実翻訳）→ fresh・旧エントリ無し。
+
+    Plan 008 §5.2 / §5.3 T-FORCE-03（Codex review）: 非 dry では mark_done が
+    progress.json を再生成するため「ファイル不在」ではなく「新ファイルに旧データ無し」
+    で検証する。entry[0] は MockTranslator に渡される（resume しない）。
+    WP-2 で RED→green。
+    """
+    import shutil
+
+    from iroiro.xml_io import parse_xml
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    old_translation = "【旧訳文】FORCE03"
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: old_translation})
+
+    called_sources: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called_sources.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_force03.xml"
+    result = _run_translate(tmp_input, output=output, force_restart=True)
+    assert result.exit_code == 0, f"--force-restart 実翻訳成功: {result.output}"
+
+    # entry[0] は MockTranslator に渡された（resume しない = fresh）
+    src_entries, _, _, _ = parse_xml(tmp_input)
+    assert src_entries[0].source in called_sources, (
+        f"entry[0] は --force-restart で fresh 翻訳される（resume しない）: "
+        f"{called_sources!r}"
+    )
+
+    # 再生成された progress.json に旧エントリが含まれない
+    raw = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert raw["entries"].get("0") != old_translation, (
+        f"再生成された progress.json に旧訳文が含まれない: {raw['entries']!r}"
+    )
+
+
+def test_T_FORCE_04_no_progress_no_error(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-FORCE-04: progress.json 無し + --force-restart → fresh・エラー無し（no-op）。
+
+    Plan 008 §5.2: 削除対象が無い場合は no-op（エラーにしない）。
+    WP-2 で RED→green（現状は --force-restart 未実装で exit 2）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    # progress.json は作らない
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_force04.xml"
+    result = _run_translate(tmp_input, output=output, force_restart=True)
+    assert result.exit_code == 0, (
+        f"progress.json 無し + --force-restart は no-op で成功: {result.output}"
+    )
+
+
+def test_T_FORCE_05_resume_plus_force_restart(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-FORCE-05: --resume + --force-restart 同時 → --force-restart 優先（fresh・削除）。
+
+    Plan 008 §3.2: --resume と --force-restart の同時指定は --force-restart を優先
+    （明示的 opt-out がより具体的意図）。エラーにしない。WP-2 で RED→green。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, entries={0: "旧訳文"})
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_force05.xml"
+    result = _run_translate(
+        tmp_input, output=output, resume=True, force_restart=True, dry_run=True
+    )
+    assert result.exit_code == 0, f"--resume + --force-restart 成功: {result.output}"
+
+    # --force-restart 優先で progress.json が削除される
+    assert not progress_path.exists(), (
+        f"--force-restart 優先で progress.json が削除される: {progress_path}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §5.3 hash 不一致・破損（振る舞い変更）
+# ---------------------------------------------------------------------------
+
+def test_T_HASH_01_mismatch_auto_resume_exit_2(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-HASH-01: progress.json hash 不一致・--resume 無し → exit 2 エラー（振る舞い変更）。
+
+    Plan 008 §3.3: auto-resume 既定化により hash 不一致は --resume 無しでも
+    exit 2 になる（従来は無視＝fresh）。エラーメッセージに --force-restart 案内。
+    WP-2 で RED→green（現状は auto-resume 未実装で fresh 扱い = exit 0）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(
+        progress_path, tmp_input, entries={0: "旧訳"}, input_hash="WRONG-HASH-TEST"
+    )
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_hash01.xml"
+    result = _run_translate(tmp_input, output=output)  # --resume 無し
+    assert result.exit_code == 2, (
+        f"hash 不一致は auto-resume で exit 2（振る舞い変更）: "
+        f"実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+    # エラーメッセージに --force-restart 案内が含まれる
+    combined = result.output + getattr(result, "stderr", "")
+    assert "--force-restart" in combined, (
+        f"エラーメッセージに --force-restart 案内が含まれる: {combined!r}"
+    )
+
+
+def test_T_HASH_02_mismatch_force_restart_fresh(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-HASH-02: hash 不一致 + --force-restart → 削除 → fresh・エラー無し。
+
+    Plan 008 §3.3: --force-restart で hash 不一致を回避して fresh 開始。
+    entry[0] は MockTranslator に渡される（resume しない = fresh）。WP-2 で RED→green。
+    """
+    import shutil
+
+    from iroiro.xml_io import parse_xml
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(
+        progress_path, tmp_input, entries={0: "旧訳"}, input_hash="WRONG-HASH-TEST"
+    )
+
+    called_sources: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called_sources.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_hash02.xml"
+    result = _run_translate(tmp_input, output=output, force_restart=True)
+    assert result.exit_code == 0, (
+        f"hash 不一致 + --force-restart は fresh で成功: {result.output}"
+    )
+
+    # entry[0] は MockTranslator に渡された（hash 不一致の progress.json を破棄 = fresh）
+    src_entries, _, _, _ = parse_xml(tmp_input)
+    assert src_entries[0].source in called_sources, (
+        f"entry[0] は --force-restart で fresh 翻訳される（hash 不一致を破棄）: "
+        f"{called_sources!r}"
+    )
+
+
+def test_T_CORRUPT_01_corrupt_auto_resume_exit_2(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CORRUPT-01: progress.json 破損（不正 JSON）・--resume 無し → exit 2 エラー。
+
+    Plan 008 §3.3: auto-resume 既定化により JSON 破損は --resume 無しでも
+    exit 2 になる。WP-2 で RED→green（現状は auto-resume 未実装で fresh = exit 0）。
+    """
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    progress_path.write_text("{not valid json !!!", encoding="utf-8")
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_corrupt01.xml"
+    result = _run_translate(tmp_input, output=output)  # --resume 無し
+    assert result.exit_code == 2, (
+        f"破損 progress.json は auto-resume で exit 2: "
+        f"実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+
+def test_T_CORRUPT_02_corrupt_force_restart_fresh(
+    tiny_xml: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-CORRUPT-02: 破損 + --force-restart → 削除 → fresh・エラー無し。
+
+    entry[0] は MockTranslator に渡される（resume しない = fresh）。WP-2 で RED→green。
+    """
+    import shutil
+
+    from iroiro.xml_io import parse_xml
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    progress_path.write_text("{not valid json !!!", encoding="utf-8")
+
+    called_sources: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called_sources.append(src)
+        return f"【訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_corrupt02.xml"
+    result = _run_translate(tmp_input, output=output, force_restart=True)
+    assert result.exit_code == 0, (
+        f"破損 + --force-restart は fresh で成功: {result.output}"
+    )
+
+    # entry[0] は MockTranslator に渡された（破損 progress.json を破棄 = fresh）
+    src_entries, _, _, _ = parse_xml(tmp_input)
+    assert src_entries[0].source in called_sources, (
+        f"entry[0] は --force-restart で fresh 翻訳される（破損を破棄）: "
+        f"{called_sources!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §5.4 retry 警告（条件変更: not cfg.resume → force_restart or existing is None）
+# ---------------------------------------------------------------------------
+
+def test_T_RETRY_WARN_01_no_warning_when_progress_loaded(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_translator,
+    caplog: pytest.LogCaptureFixture,
+    v05_default_config,
+) -> None:
+    """T-RETRY-WARN-01: --retry-failed + progress.json 有り（hash 一致）→ 警告無し。
+
+    Plan 008 §3.4 / §5.4: 新条件 ``cfg.retry_failed and (cfg.force_restart or
+    existing is None)``。progress.json が load された場合は警告を出さない
+    （failed 再試行が意味を持つ）。WP-2 で RED→green。
+    現状は ``not cfg.resume`` 条件で --resume 無しなら警告が出る → RED。
+    """
+    import logging
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    monkeypatch.chdir(tmp_path)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, failed=[1])
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_rw01.xml"
+    with caplog.at_level(logging.WARNING):
+        result = _run_translate_with_config(
+            tmp_input,
+            output=output,
+            extra_args=["--retry-failed"],  # --resume 無し
+        )
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+
+    # retry-failed 警告が出ない（progress.json が load された = failed 再試行が意味を持つ）。
+    # caplog の WARNING レコードのみで検証する（iroiro_logging は logging WARNING 経由で出力）。
+    # result.output は使わない: tmp_path のパスにテスト関数名 RETRY_WARN が含まれ、
+    # 小文字化で "retry" に偽陽性マッチしてしまうため。
+    # 日英両方の retry 警告テキストを網羅的に除外確認（英語実装のすり抜け防止・
+    # 現状 cli.py の警告は「再試行」「--retry-failed」「failed エントリ」を含む）。
+    warning_msgs = [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno >= logging.WARNING
+    ]
+    warning_text = " ".join(warning_msgs)
+    retry_indicators = ["再試行", "retry", "--retry-failed", "failed エントリ"]
+    found = [ind for ind in retry_indicators if ind.lower() in warning_text.lower()]
+    assert not found, (
+        f"--retry-failed + progress.json 有りは警告無し（新条件）: "
+        f"検出された retry 関連語句={found!r}, warning_msgs={warning_msgs!r}"
+    )
+
+
+def test_T_RETRY_WARN_02_warning_when_no_progress(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_translator,
+    caplog: pytest.LogCaptureFixture,
+    v05_default_config,
+) -> None:
+    """T-RETRY-WARN-02: --retry-failed + progress.json 無し → WARNING。
+
+    Plan 008 §3.4 / §5.4: progress.json が存在しない場合は failed 再試行が意味を
+    持たないため WARNING を出す。GREEN（新旧条件とも ``existing is None`` で WARNING）。
+    """
+    import logging
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    monkeypatch.chdir(tmp_path)
+
+    # progress.json は作らない
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_rw02.xml"
+    with caplog.at_level(logging.WARNING):
+        result = _run_translate_with_config(
+            tmp_input,
+            output=output,
+            extra_args=["--retry-failed"],  # --resume 無し・progress.json 無し
+        )
+
+    assert result.exit_code == 0, (
+        f"--retry-failed 単独は警告しつつ exit 0: {result.output}"
+    )
+
+    warning_msgs = [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+    ]
+    all_text = " ".join(warning_msgs) + " " + result.output
+    assert "retry" in all_text.lower() or "再試行" in all_text, (
+        f"progress.json 無しの --retry-failed は WARNING: {all_text!r}"
+    )
+
+
+def test_T_RETRY_WARN_03_warning_when_force_restart(
+    tiny_xml: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_translator,
+    caplog: pytest.LogCaptureFixture,
+    v05_default_config,
+) -> None:
+    """T-RETRY-WARN-03: --retry-failed + --force-restart → WARNING（progress 破棄）。
+
+    Plan 008 §3.4 / §5.4: --force-restart で progress を破棄するため failed 再試行が
+    意味を持たない → WARNING。WP-2 で RED→green（現状は --force-restart 未実装）。
+    """
+    import logging
+    import shutil
+
+    tmp_input = tmp_path / "tiny.xml"
+    shutil.copy(tiny_xml, tmp_input)
+    monkeypatch.chdir(tmp_path)
+
+    progress_path = tmp_path / (tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(progress_path, tmp_input, failed=[1])
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_rw03.xml"
+    with caplog.at_level(logging.WARNING):
+        result = _run_translate_with_config(
+            tmp_input,
+            output=output,
+            extra_args=["--retry-failed", "--force-restart"],
+        )
+
+    assert result.exit_code == 0, f"CLI 成功: {result.output}"
+
+    warning_msgs = [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+    ]
+    all_text = " ".join(warning_msgs) + " " + result.output
+    assert "retry" in all_text.lower() or "再試行" in all_text, (
+        f"--retry-failed + --force-restart は WARNING（progress 破棄）: {all_text!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# §5.5 MCM error-path パリティ（QA Major-1）
+# ---------------------------------------------------------------------------
+
+def test_T_MCM_AUTO_01_auto_resume_without_flag(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-AUTO-01: mcm + progress.json 有り・--resume 無し → 自動 resume。
+
+    Plan 008 §5.5（QA Major-1）: translate 側 T-AUTO-01 と対称。mcm サブコマンドでも
+    progress.json が存在すれば --resume 無しで自動 resume する。
+    WP-2 で RED→green。
+    """
+    from iroiro.progress import compute_skip_records_fingerprint
+
+    progress_path = tmp_path / (mcm_tmp_input.name + ".iroiro-progress.json")
+    preexisting = "【既存訳】MCM_AUTO"
+    _write_progress_json(
+        progress_path,
+        mcm_tmp_input,
+        entries={0: preexisting},
+        skip_records_fingerprint=compute_skip_records_fingerprint(frozenset()),
+    )
+
+    called: list[str] = []
+
+    def handler(src: str, rec: str) -> str:
+        called.append(src)
+        return f"【新規訳】{src}"
+
+    patch_translator(handler=handler)
+
+    output = tmp_path / "out_mcm_auto01.txt"
+    result = _run_mcm(mcm_tmp_input, output=output)  # --resume 無し
+    assert result.exit_code == 0, f"mcm auto-resume 成功: {result.output}"
+
+    # index 0 は progress.json の既存訳文（auto-resume）
+    decoded = _read_mcm_output(output)
+    assert "$MCM_TITLE\t【既存訳】MCM_AUTO" in decoded, (
+        f"index 0 は progress.json の既存訳文（auto-resume）: {decoded!r}"
+    )
+    # index 0 の source は MockTranslator に渡されない
+    assert "Hello {0} World" not in called, (
+        f"index 0 は auto-resume skip: {called!r}"
+    )
+
+
+def test_T_MCM_FORCE_01_force_restart_deletes_progress(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-FORCE-01: mcm + --force-restart → fresh・progress.json 削除。
+
+    Plan 008 §5.5: translate 側 T-FORCE-01 と対称。WP-2 で RED→green。
+    """
+    from iroiro.progress import compute_skip_records_fingerprint
+
+    progress_path = tmp_path / (mcm_tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(
+        progress_path,
+        mcm_tmp_input,
+        entries={0: "旧訳"},
+        skip_records_fingerprint=compute_skip_records_fingerprint(frozenset()),
+    )
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_mcm_force01.txt"
+    result = _run_mcm(
+        mcm_tmp_input, output=output, force_restart=True, dry_run=True
+    )
+    assert result.exit_code == 0, f"mcm --force-restart dry-run 成功: {result.output}"
+
+    assert not progress_path.exists(), (
+        f"mcm --force-restart で progress.json が削除される: {progress_path}"
+    )
+
+
+def test_T_MCM_HASH_01_mismatch_auto_resume_exit_2(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-HASH-01: mcm + hash 不一致・--resume 無し → exit 2（translate 側と対称）。
+
+    Plan 008 §5.5（QA Major-1）: 複製ブロックの片側漏れを検知。translate 側 T-HASH-01
+    と対称に mcm 側でも hash 不一致は exit 2 になる。WP-2 で RED→green。
+    """
+    from iroiro.progress import compute_skip_records_fingerprint
+
+    progress_path = tmp_path / (mcm_tmp_input.name + ".iroiro-progress.json")
+    _write_progress_json(
+        progress_path,
+        mcm_tmp_input,
+        entries={0: "旧訳"},
+        input_hash="WRONG-HASH-MCM-TEST",
+        skip_records_fingerprint=compute_skip_records_fingerprint(frozenset()),
+    )
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_mcm_hash01.txt"
+    result = _run_mcm(mcm_tmp_input, output=output)  # --resume 無し
+    assert result.exit_code == 2, (
+        f"mcm hash 不一致は auto-resume で exit 2: "
+        f"実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+
+def test_T_MCM_CORRUPT_01_corrupt_auto_resume_exit_2(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    v05_default_config,
+) -> None:
+    """T-MCM-CORRUPT-01: mcm + 破損 progress.json → exit 2 エラー。
+
+    Plan 008 §5.5: translate 側 T-CORRUPT-01 と対称。WP-2 で RED→green。
+    """
+    progress_path = tmp_path / (mcm_tmp_input.name + ".iroiro-progress.json")
+    progress_path.write_text("{corrupt json mcm !!!", encoding="utf-8")
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_mcm_corrupt01.txt"
+    result = _run_mcm(mcm_tmp_input, output=output)  # --resume 無し
+    assert result.exit_code == 2, (
+        f"mcm 破損 progress.json は auto-resume で exit 2: "
+        f"実際 {result.exit_code}\noutput: {result.output}"
+    )
+
+
+def test_T_MCM_RETRY_WARN_01_warning_when_no_progress(
+    mcm_tmp_input: Path,
+    tmp_path: Path,
+    patch_translator,
+    caplog: pytest.LogCaptureFixture,
+    v05_default_config,
+) -> None:
+    """T-MCM-RETRY-WARN-01: mcm + --retry-failed + progress.json 無し → WARNING。
+
+    Plan 008 §5.5: translate 側 T-RETRY-WARN-02 と対称。mcm でも新条件の retry 警告を
+    検証する。GREEN（新旧条件とも existing is None で WARNING）。
+    """
+    import logging
+
+    # progress.json は作らない
+
+    patch_translator(handler=lambda src, rec: f"【訳】{src}")
+
+    output = tmp_path / "out_mcm_rw01.txt"
+    with caplog.at_level(logging.WARNING):
+        result = _run_mcm(
+            mcm_tmp_input, output=output, extra_args=["--retry-failed"]
+        )
+
+    assert result.exit_code == 0, (
+        f"mcm --retry-failed 単独は警告しつつ exit 0: {result.output}"
+    )
+
+    warning_msgs = [
+        r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING
+    ]
+    all_text = " ".join(warning_msgs) + " " + result.output
+    assert "retry" in all_text.lower() or "再試行" in all_text, (
+        f"mcm progress.json 無しの --retry-failed は WARNING: {all_text!r}"
     )

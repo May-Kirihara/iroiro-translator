@@ -83,6 +83,45 @@ def with_comment_xml() -> Path:
     return FIXTURES_DIR / "with_comment.xml"
 
 
+# ----- v0.7 MCM フィクスチャパス（Plan 007 §5.4）----------------------------
+# MCM TXT 形式（Skyrim MCM 翻訳ファイル）のテスト用フィクスチャ。
+# 実データ（sample/daymoyl_ENGLISH.txt 等の第三者著作物）は使わず自作した小ファイル。
+
+@pytest.fixture(scope="session")
+def mcm_tiny_txt() -> Path:
+    """mcm_tiny.txt: UTF-16 LE BOM / CRLF / 末尾改行なし（Plan 007 §5.4）。
+
+    構成（9 物理行・CRLF 区切り・末尾改行無し）:
+      0. ``$MCM_TITLE\\tHello {0} World``（``{0}``` プレースホルダ含む翻訳対象）
+      1. ``$MCM_OPT_YES\\tYes``（プレーン翻訳対象）
+      2. 空行（passthrough）
+      3. ``# this is a comment line (tabless, passthrough)``（タブ無し非空・passthrough）
+      4. ``$MCM_DESC\\tToggle this option``
+      5. ``$MCM_MULTI\\tkey\\twith\\ttabs``（値に追加タブ → split("\\t",1) 検証用）
+      6. ``$MCM_EMPTY\\t``（値空）
+      7. ``\\t``（タブのみ → edid="" source=""）
+      8. ``$MCM_JP\\tこれは日本語です``（日本語 → is_translation_needed False → skip）
+
+    parse 期待値: entries 7 件（空行・コメント行は lines モデルの passthrough）。
+    fmt: has_bom=True, newline="\\r\\n", encoding="utf-16-le", has_trailing_newline=False。
+    """
+    return FIXTURES_DIR / "mcm_tiny.txt"
+
+
+@pytest.fixture(scope="session")
+def mcm_lf_txt() -> Path:
+    """mcm_lf.txt: UTF-8 BOM 無し / LF / 末尾改行あり（Plan 007 §5.4）。
+
+    構成（2 物理行・LF 区切り・末尾 LF 有り）:
+      - ``$MCM_LF_A\\tFirst``
+      - ``$MCM_LF_B\\tSecond {1}``
+
+    fmt: has_bom=False, newline="\\n", encoding="utf-8", has_trailing_newline=True。
+    §3.7「UTF-8 import 便益」検証用。
+    """
+    return FIXTURES_DIR / "mcm_lf.txt"
+
+
 @pytest.fixture(scope="session")
 def skip_records_xml() -> Path:
     """skip_records.xml: 複数 REC 型を含む小XML（v0.2 T56-T83 用）。

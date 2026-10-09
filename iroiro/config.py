@@ -26,6 +26,9 @@ class RunConfig:
             ``rec_hints`` / ``reject_phrases`` を含む ``PromptConfig``。
             ``iroiro.toml`` から構築される。
         resume: ``--resume`` フラグ。progress.json を読んで続きから。
+            v0.8（Plan 008 §3.1）で auto-resume が既定動作になり vestigial。
+            ``--resume`` は後方互換のため残すが no-op（cli.py で deprecated INFO
+            を出すのみ・ロジックでは参照しない）。v0.9 削除候補。
         dry_run: ``--dry-run`` フラグ。LLM を呼ばず件数表示のみ。
         verbose: ``-v`` フラグ。詳細ログ。
         skip_records: スキップ対象 REC 型のセット（v0.2 追加・v0.6 で toml 必須化）。
@@ -36,17 +39,26 @@ class RunConfig:
             ``failed`` エントリを ``state=pending`` に戻して再翻訳対象にする。
             デフォルト ``False``（後方互換・v0.3 までと同じ挙動）。優先順位は
             CLI ``--retry-failed`` / ``--no-retry-failed`` ＞ iroiro.toml ＞ False。
+        force_restart: ``--force-restart`` フラグ（v0.8 追加・Plan 008 §3.2）。
+            既存 progress.json を破棄して最初からやり直す。デフォルト ``False``
+            （= auto-resume 既定・v0.8 §3.1）。CLI 専用で iroiro.toml 項目は無い。
+            末尾かつデフォルト付きで追加し、直接 ``RunConfig(...)`` を構築する
+            テスト/スクリプトの後方互換を保つ（Plan 008 §3.5・Codex review 指摘）。
     """
 
     input_path: Path
     output_path: Path
     api: ApiConfig
     prompts: PromptConfig
+    # v0.8（Plan 008 §3.1 / §3.5）: auto-resume 既定化により vestigial。``--resume``
+    # は後方互換 no-op（cli.py で deprecated INFO を出すのみ・ロジックは参照しない）。
+    # v0.9 削除候補。残すのは直接 RunConfig 構築箇所の churn を避けるため（最小差分）。
     resume: bool
     dry_run: bool
     verbose: bool
     skip_records: frozenset[str]
     retry_failed: bool
+    force_restart: bool = False
 
 
 # ===========================================================================

@@ -11,66 +11,10 @@
 # 優先順位:
 #     強 ← CLI フラグ（明示指定時） ＞ iroiro.toml ＞ 内蔵デフォルト → 弱
 #
-#   ※ `--max-chars 0` や `--api-key ""` のような「 falsy な明示値」も
-#      正しく CLI 指定として優先されます（`is None` 判定のため）。
-#   ※ v0.5 新規（LLM 挙動中核・必須）の 3 項目は CLI フラグでの上書き非対応:
-#      ``system_prompt`` / ``reject_phrases`` / ``[iroiro.rec_hints]`` は
-#      ``iroiro.toml`` のみで指定する（セキュリティ・利便性のバランス）。
-#   ※ v0.6 新規（``skip_records``・必須）は CLI フラグ ``--skip-records`` で
-#      完全置換可能（後述）。
-#
 # 検索位置:
 #   - `--config PATH` で明示指定時はそのファイルのみ読む
 #   - 未指定時はカレントディレクトリ（コマンドを実行したディレクトリ）の
 #     `iroiro.toml` を探す（親ディレクトリへの遡りはしない）
-#
-# v0.6 での破壊的変更（Plan 006 §4 / §5 / §6）:
-#   - ``skip_records`` が **必須** になりました（``[iroiro]`` セクション内）。
-#     v0.5 までは ``DEFAULT_SKIP_RECORDS`` 定数（``iroiro/translator.py``）が
-#     コード内にありましたが、v0.6 で完全削除され ``iroiro.toml`` に移行しました
-#     （v0.5 の LLM 挙動中核 toml 化と同じ哲学・案 α 徹底版）。
-#     ``iroiro.toml`` に ``skip_records`` が無い場合、
-#     ``Error: [iroiro] skip_records is required in <path>`` で停止します。
-#     下記のデフォルト値（14 件）をそのまま使うか、適宜編集してください。
-#   - CLI ``--no-skip-default-records`` フラグは **廃止** されました
-#     （``DEFAULT_SKIP_RECORDS`` 定数が無くなったため意味を成さない）。
-#     代替手段: 「全件翻訳」したい場合は ``--skip-records ""``（明示的空文字）か
-#     ``iroiro.toml`` で ``skip_records = []`` を指定してください。
-#   - CLI ``--skip-records`` のセマンティクスが **完全置換** に変更されました。
-#     v0.5 までは「デフォルトへの追加」でしたが、v0.6 では toml の ``skip_records``
-#     を完全に置き換えます（``str | None = None`` パターン・3 状態）:
-#       - 省略（``None``）= toml の ``skip_records`` を使用
-#       - ``--skip-records ""``（明示空文字）= 空 set（全件翻訳）
-#       - ``--skip-records "HDPT:FULL,..."``（非空）= toml を完全置換
-#   - Skyrim / Fallout4 / Starfield の **3 ゲーム対応**。skip リスト 14 件と
-#     ``[iroiro.rec_hints]`` は NG ガイド §3 / §4 / §9.1 に基づき 3 ゲーム共通の
-#     「内部管理用 / 翻訳候補」レコードを網羅します。
-#   - 既存の ``iroiro.toml`` を流用する場合は **``skip_records``（14 件）を手動追記**
-#     する必要があります（``cp iroiro.toml.example iroiro.toml`` で上書きすると
-#     既存の API 設定が消えるため）。詳しくは docs/usage.md /
-#     docs/handoff/006-multi-game.md を参照。
-#   - v0.5 までの ``progress.json`` を v0.6 で ``--resume`` すると ``skip_records``
-#     の fingerprint 不一致（12 件 → 14 件）で停止します（安全側の挙動）。
-#     ``progress.json`` を削除して再実行してください。
-#
-# v0.5 での破壊的変更（Plan 005 §2.2 / §2.9）:
-#   - ``iroiro.toml`` は ``--dry-run`` 含む全操作で **必須** になりました。
-#     v0.4 までは ``iroiro.toml`` 無しでも内蔵デフォルトで動きましたが、
-#     v0.5 では LLM 挙動中核（``system_prompt`` / ``reject_phrases`` /
-#     ``[iroiro.rec_hints]``）の完全 toml 化（案 α）のため、これらが欠損すると
-#     ``Error: iroiro.toml not found in <cwd>.`` 等のエラーで停止します。
-#   - 既存の ``iroiro.toml`` を流用する場合は **3 新項目を手動追記** する必要が
-#     あります（``cp iroiro.toml.example iroiro.toml`` で上書きすると既存の API 設定が
-#     消えるため）。詳しくは docs/usage.md / docs/handoff/005-llm-config.md を参照。
-#
-# ⚠️ セキュリティ注意:
-#   - API キーは CLI フラグ `--api-key` より `iroiro.toml` に書く方が安全
-#     （`--api-key` は shell history・`ps` 出力に残るため）。
-#     `iroiro.toml` は `.gitignore` 対象なので commit されませんが、
-#     **commit 事故・共有事故を防ぐため** `chmod 600 iroiro.toml` を推奨します。
-#   - `iroiro.toml.example`（本ファイル）には実キーを書かないこと
-#     （本ファイルは git 管理対象で commit されるため・ダミー値のままにする）。
-#   - 詳細は docs/usage.md「セキュリティ注意事項」節を参照。
 #
 # 詳細は docs/usage.md / docs/design.md を参照。
 
@@ -89,15 +33,6 @@
 # ``iroiro.toml`` にこれが無い場合、``Error: [iroiro] skip_records is required``
 # 等のエラーで停止します。下記のデフォルト値（NG ガイド §9.1 Conservative
 # Preset 準拠・EDID 抜き 14 件）をそのまま使うか、適宜編集してください。
-#
-# ※ 各要素は strip + 大文字正規化されます（``hdpt:full`` → ``HDPT:FULL``）。
-# ※ 重複は自動で除去されます。
-# ※ 空リスト ``[]`` も許可（全件翻訳・review-needed 運用時等）。
-# ※ v0.6 の破壊的変更: ``DEFAULT_SKIP_RECORDS`` 定数はコードから完全削除され、
-#    ``iroiro.toml`` の ``skip_records`` が必須になりました。CLI の
-#    ``--no-skip-default-records`` フラグも廃止されました。
-# ※ 3 ゲーム対応（Skyrim / Fallout4 / Starfield）: ``FLST:FULL`` / ``KYWD:FULL``
-#    は v0.6 で追加（FormID List / Keyword・3 ゲーム共通の内部管理用）。
 
 skip_records = [
   "HDPT:FULL", "FURN:FULL", "CLAS:FULL", "DOOR:FULL",

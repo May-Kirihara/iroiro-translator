@@ -1,0 +1,2 @@
+$MCM_LF_A	First
+$MCM_LF_B	Second {1}

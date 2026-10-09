@@ -24,6 +24,7 @@ PROTECTED_TOKENS_RE: re.Pattern[str] = re.compile(
     | %\{[^}]+\}                    # %{name}
     | \\[nr]                        # \n, \r (リテラル2文字)
     | \#                            # # (Skyrim 色コード等)
+    | \{\d+\}                       # {0} {1} ... (Skyrim MCM GlobalVariable 置換・Plan 007 §3.3)
     """,
     re.VERBOSE,
 )

@@ -23,7 +23,8 @@ iroiro translate INPUT.xml [OPTIONS]
 | `--concurrency` | INTEGER | `1` | 同時リクエスト数 |
 | `--max-chars` | INTEGER | `4000` | 1エントリの最大文字数。超過時はスキップ（v0.1 では分割しない） |
 | `--timeout` | FLOAT | `120.0` | 1リクエストの読み出しタイムアウト（秒） |
-| `--resume` | FLAG | `False` | `progress.json` があれば再開 |
+| `--resume` | FLAG | `False` | （v0.8 で no-op 化・非推奨）progress.json があれば再開。**現在は自動レジュームが既定** なので渡す必要はありません（v0.9 削除候補） |
+| `--force-restart` / `--no-force-restart` | FLAG | `False` | 既存 `progress.json` を **破棄（削除）** して最初からやり直す（v0.8・`--dry-run` でも削除します・明示的 opt-in）。既定（False）= 自動レジューム |
 | `--retry-failed` / `--no-retry-failed` | FLAG | `False` | resume 時に `failed` エントリを再翻訳対象に戻す（未指定時は `iroiro.toml` → 内蔵デフォルト）（v0.4） |
 | `--dry-run` | FLAG | `False` | LLM を呼ばず処理件数のみ表示 |
 | `--skip-records` | TEXT | `None` | 翻訳スキップ REC 型（カンマ区切り・例: `"HDPT:FULL,FACT:FULL"`）。**3 状態**（v0.6）: 省略=`iroiro.toml` の `skip_records` を使用 / `""`=明示的空 set（全件翻訳）/ 非空文字列=toml を完全置換（v0.2・v0.6 でセマンティクス変更） |
@@ -54,6 +55,14 @@ iroiro translate INPUT.xml [OPTIONS]
 > 既存の `iroiro.toml` を流用する場合は `skip_records`（14 件）を **手動追記** してください。
 > 詳細は下記の「[skip_records の toml 必須化と移行（v0.6）](#skip_records-の-toml-必須化と移行v06)」節と
 > 「[翻訳スキップ REC 型（v0.2 / v0.6）](#翻訳スキップ-rec-型v02--v06)」節を参照。
+
+> **⚠️ v0.8 の破壊的変更（auto-resume 既定化）**: progress.json が存在する場合、`--resume`
+> フラグ **無しで自動レジューム** します（従来は `--resume` 必須・忘れると上書きで進捗消失の事故）。
+> これに伴い、progress.json の `input_hash` が現在の入力と一致しない場合（入力ファイルを編集した等）や、
+> progress.json が破損している場合は **`--resume` 無しでも exit 2 で停止** するようになりました
+> （従来は無視して fresh start）。`--force-restart` で既存 progress.json を破棄して最初から、
+> または progress.json を削除して再実行で回避してください。詳細は下記の
+> 「[自動レジューム化と移行（v0.8）](#自動レジューム化と移行v08)」節を参照。
 
 ---
 
@@ -489,6 +498,58 @@ v0.5 までの `iroiro.toml.example` には `INFO:RNAM` が含まれていまし
 
 ---
 
+## 自動レジューム化と移行（v0.8）
+
+v0.8 で progress.json が存在する場合の **自動レジュームを既定動作** にしました（従来は `--resume` フラグ必須）。
+**`--resume` 忘れで progress.json が新規データで上書きされ、蓄積した進捗（訳文・failed リスト）が消滅する事故**
+を「デフォルト安全」にする変更です。最初からやり直したい場合は `--force-restart` で明示します。
+
+### 影響範囲（破壊的変更）
+
+`translate` / `mcm` 両サブコマンドで、以下の **振る舞いが変わります**:
+
+| 状態 | 従来（v0.7 まで・`--resume` 無し） | v0.8 既定（auto-resume） | `--force-restart` |
+|---|---|---|---|
+| progress.json 無し | fresh 開始 | fresh 開始 | fresh 開始（削除対象無し・no-op） |
+| progress.json 有り・hash 一致 | **上書き（進捗消失の事故）** | **自動 resume** ✓ | 削除 → fresh 開始 |
+| progress.json 有り・**hash 不一致** | 無視＝fresh 開始 | **exit 2 で停止**（data integrity） | 削除 → fresh 開始 |
+| progress.json 有り・**JSON 破損** | 無視＝fresh 開始 | **exit 2 で停止** | 削除 → fresh 開始 |
+
+特に **「hash 不一致・JSON 破損が `--resume` 無しでも exit 2 になる」** 点が破壊的変更の核心です。
+従来は `--resume` を付けなければ単に無視されて fresh start していましたが、自動レジューム既定化により
+progress.json の整合性が常に検証されるようになりました。
+
+### 回避方法（exit 2 の場合）
+
+エラーメッセージに `--force-restart` 案内が付きます。どちらでも回避できます:
+
+```bash
+# (a) 推奨: --force-restart で progress.json を破棄して最初から
+uv run iroiro translate INPUT.xml --force-restart
+
+# (b) 手動で progress.json を削除して再実行
+rm INPUT.xml.iroiro-progress.json
+uv run iroiro translate INPUT.xml
+```
+
+### 移行手順 — 既存ユーザー
+
+特別な移行作業は **不要** です（設定ファイル・CLI の必須項目追加はありません）。
+
+- **従来 `--resume` を使っていた場合**: `--resume` を付けても付けなくても同じ挙動（自動レジューム）。
+  `--resume` を外して運用しても構いません。`--resume` を付けると deprecated INFO が出ますが動作に影響しません。
+- **従来 `--resume` 無しで上書き再実行していた場合（fresh 開始を意図）**: **`--force-restart` を使ってください**。
+  v0.8 では `--resume` 無しでも自動レジュームするため、従来の「何も付けずに再実行」は fresh でなく resume になります。
+- **入力ファイルを編集した場合**: 従来は（`--resume` 無しなら）暗黙に fresh start していましたが、
+  v0.8 では **exit 2 で停止** します。`--force-restart` を使ってください（data integrity 保護）。
+
+### `--resume` は後方互換 no-op（v0.9 削除候補）
+
+`--resume` フラグは既存スクリプト・エイリアスを壊さないため残しますが、v0.8 で **no-op**（意味を持たない）に
+なりました（自動レジュームが既定のため）。渡すと deprecated INFO ログを1行出します。v0.9 で削除候補です。
+
+---
+
 ## LLM プロンプトのカスタマイズ（v0.5）
 
 v0.5 で LLM 挙動の中核 3 要素が `iroiro.toml` から編集可能になりました。翻訳方針の試行錯誤・
@@ -616,21 +677,52 @@ uv run iroiro translate path/to/your_mod.xml
 
 ---
 
-## 再開
+## 再開（自動レジューム + `--force-restart`）
 
-途中で止まった場合、`--resume` で進捗ファイルから続きを実行できる:
+途中で止まった場合、**同じコマンドをそのまま再実行するだけで** `progress.json` から続きを実行できます。
+v0.8 から `--resume` フラグは **不要** になりました（progress.json が存在すれば自動レジューム）:
 
 ```bash
-uv run iroiro translate path/to/your_mod.xml --resume
+# 途中で止まったら、同じコマンドを再実行するだけ（--resume 不要・v0.8）
+uv run iroiro translate path/to/your_mod.xml
 ```
 
-`--resume` 時の挙動:
+自動レジューム時の挙動:
 
 - 既存 `entries` の index はスキップ（`state=translated`、訳文を再利用）
 - 既存 `failed` の index は再試行せず保持（`state=failed`、元の `<Dest>` を保持）※ デフォルト動作・後述の `--retry-failed` で変更可能
-- `input_hash`（SHA256）が不一致 → 停止（入力 XML を変更した場合）
+- `input_hash`（SHA256）が不一致 → **exit 2 で停止**（入力 XML を変更した場合・`--force-restart` または progress.json 削除で回避）
 - `skip_records_fingerprint` が不一致 → **WARNING ログのみ（resume 継続・exit code 0）**（`skip_records` / `--skip-records` を変更した場合）（v0.2・v0.6 で fingerprint 値が 12件→14件に変更・**v0.6.1 で停止→WARNING に緩和**）
-- JSON decode error → 停止（ユーザーにファイル削除を促す）
+- JSON decode error（破損 progress.json）→ **exit 2 で停止**（`--force-restart` または progress.json 削除で回避）
+
+### `--force-restart`（v0.8・最初からやり直す）
+
+progress.json を残したまま最初から翻訳し直したい場合（入力ファイルを編集した・`skip_records` を変えたい等）は
+`--force-restart` を使います。起動時に **既存 progress.json を削除** して fresh 開始します:
+
+```bash
+# 既存 progress.json を破棄して最初から（hash 不一致エラーも回避）
+uv run iroiro translate path/to/your_mod.xml --force-restart
+```
+
+> **dry-run + `--force-restart` も progress.json を削除します**。`--force-restart` は
+> 利用者の **明示的破壊 opt-in** であり、dry-run の「副作用なし」原則より優先されます（docs 明記）。
+
+`--resume` と `--force-restart` の同時指定は **`--force-restart` が優先** されます（明示的 opt-out の方が
+具体的意図として扱われます・エラーにしません）。`translate` / `mcm` 両サブコマンドで対称に動作します。
+
+### `--resume` の no-op 化（後方互換・v0.8）
+
+v0.7 までは `--resume` フラグの付与が必要でしたが、v0.8 で自動レジュームが既定動作になったため
+`--resume` は **no-op**（何もしない）になりました。後方互換のためフラグ自体は受け付けますが、
+渡すと deprecated INFO ログを1行出します:
+
+```
+INFO  --resume は既定動作になりました（no-op・非推奨・v0.9 で削除候補）
+```
+
+既存のスクリプトやエイリアスで `--resume` を渡している場合は、そのまま動きます（削除する必要はありません）。
+**`--resume` を忘れたことによる進捗消失事故**（v0.7 まで問題だった）は v0.8 で構造的に解消されました。
 
 ### failed の再試行（v0.4）
 
@@ -658,18 +750,23 @@ CLI フラグ（`--retry-failed` / `--no-retry-failed`）＞ `iroiro.toml` ＞ �
 `iroiro.toml` に `retry_failed = true` と書いておけば、毎回 `--retry-failed` を打つ必要がありません。
 CLI フラグは `iroiro.toml` より常に優先されるので、`--no-retry-failed` で一時的に無効化することも可能です。
 
-#### `--retry-failed` 単独（`--resume` 無し）の挙動
+#### `--retry-failed` 単独（progress.json が読み込まれなかった場合）の挙動
 
-`retry_failed` が有効な状態（CLI の `--retry-failed` または `iroiro.toml` の `retry_failed = true`）
-で `--resume` を付けずに実行すると、警告ログが出て **通常実行** になります（exit 2 にはなりません）。
-`--resume` 無しでは `progress.json` が読み込まれないため、`failed` を `pending` に戻す対象もありません。
-ユーザーが `--resume` 忘れに気づけるよう WARNING レベルで出力します。
+`retry_failed` が有効な状態（CLI の `--retry-failed` または `iroiro.toml` の `retry_failed = true`）で、
+かつ **progress.json が読み込まれなかった** 場合（progress.json が存在しない・または `--force-restart` で破棄した）、
+警告ログが出て **通常実行（fresh 開始）** になります（exit 2 にはなりません）。progress.json が読み込まれなければ
+`failed` を `pending` に戻す対象も無いためです。ユーザーが `--force-restart` の付け忘れ等に気づけるよう
+WARNING レベルで出力します（v0.8 で警告条件を「`--resume` 無し」から「progress.json 未 load」に変更・auto-resume 既定化に追随）。
 
 ```bash
-# CLI フラグで指定した場合も toml で retry_failed = true の場合も、同じ WARNING が出ます
-$ iroiro translate INPUT.xml --retry-failed
-WARNING  --retry-failed が指定されましたが --resume が無いため、failed エントリの再試行は行われません（通常実行になります）
+# progress.json が存在しないか --force-restart で破棄した状態で --retry-failed を渡すと WARNING
+$ iroiro translate INPUT.xml --retry-failed            # progress.json 無し → WARNING
+$ iroiro translate INPUT.xml --force-restart --retry-failed  # progress 破棄 → WARNING
+WARNING  --retry-failed が指定されましたが progress.json が読み込まれなかったため、failed エントリの再試行は行われません（--force-restart または progress.json 無し）
 ```
+
+> progress.json が存在して hash が一致すれば、`--resume` フラグの有無に関わらず自動レジュームするため
+> WARNING は出ません（v0.8・auto-resume 既定）。
 
 #### 不変性（entries ∩ failed = ∅）
 
@@ -794,6 +891,120 @@ uv run iroiro translate INPUT.xml \
 
 ---
 
+## MCM 翻訳 TXT（v0.7）
+
+v0.7 で **Skyrim MCM（Mod Configuration Menu）翻訳 TXT** 形式に対応しました。
+`iroiro mcm INPUT.txt` で、xTranslator 形式 XML ではなく SkyUI MCM 翻訳ファイル
+（`*_ENGLISH.txt` / `translation_english.txt` 系・UTF-16 LE + BOM）の値を英→日翻訳します。
+
+既存の `translate`（XML）とは **別サブコマンド** で、XML パスには一切影響しません（回帰ゼロ）。
+翻訳エンジン（LLM 呼出・post-processing・トークン整合性検証・resume）は `translate` と共通です。
+
+### 使い方
+
+```bash
+# iroiro.toml は translate と同じく必須（cp iroiro.toml.example iroiro.toml 済みであること）
+uv run iroiro mcm path/to/your_mod_ENGLISH.txt --dry-run
+```
+
+出力例（実データ `sample/daymoyl_ENGLISH.txt` で確認済み）:
+
+```
+INFO  Parsing MCM input: sample/daymoyl_ENGLISH.txt
+INFO  Parsed 216 MCM entries (BOM=True, newline='\r\n', encoding=utf-16-le)
+総エントリ数: 216
+翻訳対象: 216
+スキップ（空/日本語混入）: 0
+スキップ（長文超過）: 0
+--dry-run: LLM を呼ばず終了します
+```
+
+翻訳実行（LLM サーバー起動後）:
+
+```bash
+uv run iroiro mcm path/to/your_mod_ENGLISH.txt
+```
+
+- 出力ファイル: `path/to/your_mod_ENGLISH.translated.txt`（`.translated.xml` でない点に注意）
+- 進捗ファイル: `path/to/your_mod_ENGLISH.txt.iroiro-progress.json`（`translate` と同名規則）
+
+### CLI フラグ一覧
+
+```
+iroiro mcm INPUT.txt [OPTIONS]
+```
+
+| フラグ | 型 | デフォルト | 説明 |
+|---|---|---|---|
+| `INPUT`（引数） | PATH（必須） | — | 入力 MCM TXT ファイルのパス |
+| `-o`, `--output` | PATH | `<input>.translated.txt` | 出力 TXT ファイルのパス（`.translated.txt`・`.translated.xml` でない） |
+| `--config` | PATH | なし | `iroiro.toml` 設定ファイルのパス（未指定時は cwd の `iroiro.toml` を探す・**`iroiro.toml` は必須**） |
+| `--api-base` | TEXT | `http://localhost:8081/v1` | OpenAI 互換 API のベース URL（`translate` と共通） |
+| `--api-key` | TEXT | `iroiro` | API キー（`translate` と共通） |
+| `--model` | TEXT | `ggml-org/gemma-4-12B-it-GGUF:Q4_K_M` | モデル名（`translate` と共通） |
+| `--concurrency` | INTEGER | `1` | 同時リクエスト数（`translate` と共通） |
+| `--max-chars` | INTEGER | `4000` | 1エントリの最大文字数。超過時はスキップ（`translate` と共通） |
+| `--timeout` | FLOAT | `120.0` | 1リクエストの読み出しタイムアウト（秒・`translate` と共通） |
+| `--resume` | FLAG | `False` | （v0.8 で no-op 化・非推奨）progress.json があれば再開（`translate` と共通・現在は自動レジュームが既定） |
+| `--force-restart` / `--no-force-restart` | FLAG | `False` | 既存 progress.json を破棄して最初から（v0.8・`translate` と共通・dry-run でも削除） |
+| `--retry-failed` / `--no-retry-failed` | FLAG | `False` | resume 時に `failed` エントリを再翻訳対象に戻す（`translate` と共通・v0.4） |
+| `--dry-run` | FLAG | `False` | LLM を呼ばず処理件数のみ表示（`translate` と共通） |
+| `-v`, `--verbose` | FLAG | `False` | 詳細ログ（`translate` と共通） |
+| `--help` | — | — | ヘルプを表示して終了 |
+
+> **⚠️ `--skip-records` はありません**: MCM には REC 型概念が無いため、`--skip-records` フラグは
+> **存在しません**。指定すると typer が `No such option: --skip-records`（exit code 2）で拒否します。
+> スキップ制御は `--max-chars`（長文超過）のみです。
+
+> **`iroiro.toml` は必須**: `translate` と同じく `iroiro.toml` が必須です。`skip_records` は MCM では
+> 使用しませんが、`load_config` の必須チェックを通すため `iroiro.toml` に記載が必要です
+> （`cp iroiro.toml.example iroiro.toml` で対応・編集不要）。
+
+### エントリ判定と出力形式
+
+MCM TXT は1行1エントリ・タブ区切りの `$KEY\tEnglish text` 構造です。`parse_mcm` は次のように分類します:
+
+| 行種別 | 判定 | 扱い |
+|---|---|---|
+| キー付き行（翻訳対象） | タブ `\t` を含む非空行 | `split("\t", 1)` で key/value 分離。値内の追加タブは保持。`$` prefix は **必須でない**（タブ有り非空行は全て翻訳対象） |
+| 空行 | `strip() == ""` | passthrough（そのまま出力・未翻訳） |
+| タブ無し非空行 | `strip() != ""` かつ `\t` を含まない | passthrough（コメント・メタ行等・そのまま出力・未翻訳） |
+
+**出力形式（フォーマット保存 + 改行正規化）**:
+
+- **エンコーディング**: 入力を保存。UTF-16 LE + BOM → UTF-16 LE + BOM 出力。UTF-16 BE / UTF-8 BOM / UTF-8（BOM 無し）も受入（出力は入力エンコーディングを保存）。
+- **改行**: 入力の **支配的改行**（CRLF 件数 ≥ LF-only 件数 なら CRLF、 else LF）へ正規化。行ごとの改行保存は行わない（`xml_io.py` と対称・実用価値無し）。
+- **末尾改行**: 入力の有無を保存（末尾改行なし入力 → 末尾改行なし出力）。
+- **`$KEY`**: そのまま保持。値側のみ訳文で置換。
+
+> 完全なバイト同一性（byte-fidelity）は **意図的に保証しません**。BOM / encoding / 末尾改行の有無は
+> 保存しますが、混在改行は支配的改行へ正規化します。これは既存 `xml_io.py` と対称な契約です。
+
+### プレースホルダ保護
+
+MCM 値に含まれる `{0}` `{1}` `{2}` 等（Skyrim GlobalVariable 置換）は、`escape.py` の共有
+トークン整合性検証で **出現回数を完全保存** することを強制します。訳文で `{0}` を欠落させると
+`token mismatch` の `IroiroError` で `state=failed` になります（XML の `<alias=...>` 等の保護と同じ仕組み）。
+
+> この保護は **プロンプトに依存しません**（トークン検証が強制保証）。既存 `system_prompt` をそのまま
+> 再利用します。`{N}` 保存行の `system_prompt` 追記は将来改善（v0.8 候補）に委ねています。
+
+### skip / fail 時の値保護
+
+翻訳スキップ（空/日本語混入・`--max-chars` 超過）や翻訳失敗（LLM エラー・トークン不一致）のエントリは、
+**出力値が英文のまま** になります（空文字にならない・data-loss 無し）。これは MCM エントリ構築時に
+`original_dest = source`（英文値そのもの）を設定しているためで、既存 XML の「失敗時は元 `<Dest>` を保持」
+哲学と同じです（MCM では「元の値 = 英文」）。
+
+### 既知制限: first-line-only（長文 description 系）
+
+`translate`（XML）と同じく、LLM が複数行の訳文を返した場合は **最初の行のみを採用** します
+（`_postprocess`）。MCM 値は本来単一行ですが、長文 description 系で LLM が複数行返した場合は
+**2行目以降が黙って truncate** されます。この挙動は XML と同じ（v0.1 からの既知制限）です。
+トラブルシュートの「[MCM の訳文が途中で切れる](#mcm-の訳文が途中で切れる-first-line-only)」を参照してください。
+
+---
+
 ## 設定例
 
 ### llama.cpp server の起動
@@ -908,12 +1119,27 @@ file path/to/your_mod.xml
 
 ### `progress.json` の hash 不一致エラー
 
-入力 XML を変更した後に `--resume` すると、`input_hash`（SHA256）が合わずに停止する。
-これは安全側の挙動。メッセージに従い進捗ファイルを削除して再実行する:
+入力 XML を変更した後に再実行すると、`input_hash`（SHA256）が合わずに **exit 2 で停止** します
+（v0.8 で `--resume` 無しでも停止するようになりました・従来は `--resume` 無しなら無視して fresh start）。
+これは安全側の挙動。`--force-restart`（推奨）または progress.json の削除で再実行してください:
 
 ```bash
+# (a) --force-restart で progress.json を破棄して最初から（推奨・dry-run でも削除）
+uv run iroiro translate INPUT.xml --force-restart
+
+# (b) 手動で削除して再実行
 rm path/to/your_mod.xml.iroiro-progress.json
+uv run iroiro translate INPUT.xml
 ```
+
+エラーメッセージ例（`--force-restart` 案内付き）:
+
+```
+Error: input_hash mismatch: progress.json has '...', current input is '...'. Please remove <path> if the input file has changed.  -> Or use --force-restart to discard and start fresh.
+```
+
+> progress.json が **破損**（JSON decode error）の場合も同じく exit 2 で停止します。同じく
+> `--force-restart` または progress.json 削除で回避してください。
 
 ### トークン不一致で大量に `failed` になる
 
@@ -926,13 +1152,36 @@ LLM が `<alias=...>` 等のプレースホルダを保持しない場合に発�
 `--max-chars`（既定 4000）超過の `<Source>` はスキップされる。v0.1 では自動分割しない。
 長い書籍本文を持つ MOD では一部エントリが未翻訳で残る可能性がある。
 
+### MCM の訳文が途中で切れる（first-line-only）
+
+`iroiro mcm`（v0.7）で長文 description 系のエントリを翻訳した際、**訳文の2行目以降が消失** する
+ことがあります。これは `translate`（XML）と同じく、LLM が複数行の訳文を返した場合に
+post-processing が **最初の行のみを採用** するためです（MCM 値は本来単一行・既知制限）。
+
+**確認方法**: 該当エントリが `failed` ではなく `translated` だが値が短く切れている場合、
+`--verbose` で LLM の生応答を確認してください（複数行で返っているか）。
+
+**対策**:
+- より指示追従性の高いモデルに切り替える（「複数行は禁止」の指示に従うモデルを選ぶ）
+- `--concurrency 1`（既定）で安定化を試す
+- 長文 description 系が多い場合、`system_prompt`（v0.5・`iroiro.toml`）に「MCM の値は1行で出力すること」
+  を追記することを検討（`{N}` 保存はトークン検証で強制保証されるためプロンプト非依存・安全性は変わらない）
+
+> 切れた訳文でも `{0}` 等のプレースホルダが欠落していなければ `failed` にはなりません（出力値は英文でなく
+> 切れた訳文になります・安全側ではあるが理想的でない）。
+
 ### 出力・進捗ファイルを削除して完全に元に戻す
 
-iroiro は入力 XML を破壊しない設計。生成物を削除すれば完全に元の状態に戻る:
+iroiro は入力ファイル（XML / MCM TXT とも）を破壊しない設計。生成物を削除すれば完全に元の状態に戻る:
 
 ```bash
+# translate（XML）の場合
 rm path/to/your_mod.translated.xml
 rm path/to/your_mod.xml.iroiro-progress.json
 # 異常終了で .tmp が残った場合も削除
 rm -f path/to/your_mod.xml.iroiro-progress.json.tmp
+
+# mcm（TXT・v0.7）の場合
+rm path/to/your_mod_ENGLISH.translated.txt
+rm path/to/your_mod_ENGLISH.txt.iroiro-progress.json
 ```
